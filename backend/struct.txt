@@ -1,0 +1,165 @@
+multi-tenant-access-management-platform/
+│
+├── docker-compose.yml
+├── .gitignore
+├── PLANNING.md
+├── README.md
+│
+├── backend/
+│   ├── pom.xml
+│   ├── .env.example
+│   ├── mvnw
+│   ├── mvnw.cmd
+│   └── src/
+│       ├── main/
+│       │   ├── java/com/aatir/backend/
+│       │   │   │
+│       │   │   ├── BackendApplication.java
+│       │   │   │
+│       │   │   ├── config/
+│       │   │   │   ├── SecurityConfig.java          # Spring Security filter chain config
+│       │   │   │   ├── RedisConfig.java              # Redis connection bean
+│       │   │   │   └── WebMvcConfig.java             # interceptor registration
+│       │   │   │
+│       │   │   ├── entity/
+│       │   │   │   ├── Organization.java
+│       │   │   │   ├── User.java
+│       │   │   │   ├── Role.java
+│       │   │   │   ├── Permission.java
+│       │   │   │   ├── RolePermission.java
+│       │   │   │   ├── UserRole.java
+│       │   │   │   ├── Resource.java
+│       │   │   │   ├── Invitation.java
+│       │   │   │   └── AuditLog.java
+│       │   │   │
+│       │   │   ├── repository/
+│       │   │   │   ├── OrganizationRepository.java
+│       │   │   │   ├── UserRepository.java
+│       │   │   │   ├── RoleRepository.java
+│       │   │   │   ├── PermissionRepository.java
+│       │   │   │   ├── ResourceRepository.java
+│       │   │   │   ├── InvitationRepository.java
+│       │   │   │   └── AuditLogRepository.java
+│       │   │   │
+│       │   │   ├── dto/
+│       │   │   │   ├── request/
+│       │   │   │   │   ├── RegisterOrgRequest.java
+│       │   │   │   │   ├── LoginRequest.java
+│       │   │   │   │   ├── CreateResourceRequest.java
+│       │   │   │   │   ├── InviteUserRequest.java
+│       │   │   │   │   ├── CreateRoleRequest.java
+│       │   │   │   │   └── UpdateOrgSettingsRequest.java
+│       │   │   │   └── response/
+│       │   │   │       ├── AuthResponse.java
+│       │   │   │       ├── ResourceResponse.java
+│       │   │   │       ├── UsageResponse.java
+│       │   │   │       └── ErrorResponse.java
+│       │   │   │
+│       │   │   ├── controller/
+│       │   │   │   ├── AuthController.java
+│       │   │   │   ├── OrganizationController.java
+│       │   │   │   ├── InvitationController.java
+│       │   │   │   ├── RoleController.java
+│       │   │   │   ├── ResourceController.java
+│       │   │   │   ├── UsageController.java
+│       │   │   │   └── AuditLogController.java
+│       │   │   │
+│       │   │   ├── service/
+│       │   │   │   ├── AuthService.java
+│       │   │   │   ├── OrganizationService.java
+│       │   │   │   ├── InvitationService.java
+│       │   │   │   ├── RoleService.java
+│       │   │   │   ├── ResourceService.java
+│       │   │   │   ├── AuditLogService.java
+│       │   │   │   └── RateLimitService.java
+│       │   │   │
+│       │   │   ├── security/
+│       │   │   │   ├── JwtUtil.java                  # token generation/parsing
+│       │   │   │   ├── JwtAuthFilter.java            # populates SecurityContext
+│       │   │   │   ├── CustomPermissionEvaluator.java
+│       │   │   │   └── CurrentUserContext.java       # extracts org_id/user_id from JWT
+│       │   │   │
+│       │   │   ├── tenant/
+│       │   │   │   ├── TenantFilter.java             # OncePerRequestFilter, enables Hibernate filter
+│       │   │   │   └── TenantContext.java            # ThreadLocal holder for current org_id
+│       │   │   │
+│       │   │   ├── ratelimit/
+│       │   │   │   ├── RateLimitFilter.java          # runs before TenantFilter
+│       │   │   │   ├── TokenBucketLimiter.java
+│       │   │   │   ├── SlidingWindowLimiter.java
+│       │   │   │   └── scripts/
+│       │   │   │       └── token_bucket.lua           # atomic Redis script
+│       │   │   │
+│       │   │   ├── audit/
+│       │   │   │   └── AuditAspect.java              # @Aspect for audit logging
+│       │   │   │
+│       │   │   └── exception/
+│       │   │       ├── GlobalExceptionHandler.java
+│       │   │       ├── ResourceNotFoundException.java
+│       │   │       └── RateLimitExceededException.java
+│       │   │
+│       │   └── resources/
+│       │       ├── application.yml
+│       │       └── data.sql                          # seed: default Admin role + permissions
+│       │
+│       └── test/
+│           └── java/com/aatir/backend/
+│               ├── isolation/
+│               │   ├── CrossTenantAccessTest.java
+│               │   ├── CrossTenantWriteTest.java
+│               │   ├── FilterBypassRegressionTest.java
+│               │   └── OrgIdInjectionTest.java
+│               ├── rbac/
+│               │   └── PermissionBoundaryTest.java
+│               └── ratelimit/
+│                   ├── QuotaEnforcementTest.java
+│                   ├── QuotaIsolationTest.java
+│                   └── LiveLimitUpdateTest.java
+│
+└── frontend/
+    ├── package.json
+    ├── vite.config.js
+    ├── index.html
+    └── src/
+        ├── main.jsx
+        ├── App.jsx
+        │
+        ├── api/
+        │   ├── axiosClient.js                        # interceptor: attach JWT, handle 401/403/404/429
+        │   ├── authApi.js
+        │   ├── resourceApi.js
+        │   ├── roleApi.js
+        │   ├── invitationApi.js
+        │   ├── usageApi.js
+        │   └── auditLogApi.js
+        │
+        ├── context/
+        │   └── AuthContext.jsx                        # JWT + current org context
+        │
+        ├── components/
+        │   ├── layout/
+        │   │   ├── Navbar.jsx                         # shows "you are in Org X"
+        │   │   └── Sidebar.jsx
+        │   ├── resources/
+        │   │   ├── ResourceList.jsx
+        │   │   └── ResourceForm.jsx
+        │   ├── roles/
+        │   │   ├── RoleList.jsx
+        │   │   └── PermissionMatrix.jsx
+        │   ├── invitations/
+        │   │   ├── InviteForm.jsx
+        │   │   └── AcceptInvite.jsx
+        │   ├── usage/
+        │   │   └── UsageDashboard.jsx
+        │   └── audit/
+        │       └── AuditLogViewer.jsx
+        │
+        └── pages/
+            ├── LoginPage.jsx
+            ├── RegisterOrgPage.jsx
+            ├── DashboardPage.jsx
+            ├── ResourcesPage.jsx
+            ├── RolesPage.jsx
+            ├── InvitationsPage.jsx
+            ├── UsagePage.jsx
+            └── AuditLogPage.jsx
