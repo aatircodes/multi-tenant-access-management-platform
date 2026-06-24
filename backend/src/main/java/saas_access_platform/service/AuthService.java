@@ -1,0 +1,138 @@
+package saas_access_platform.service;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import saas_access_platform.dto.request.LoginRequest;
+import saas_access_platform.dto.request.RegisterOrgRequest;
+import saas_access_platform.entity.Organization;
+import saas_access_platform.entity.Permission;
+import saas_access_platform.entity.Role;
+import saas_access_platform.entity.User;
+import saas_access_platform.entity.UserRole;
+import saas_access_platform.repository.OrganizationRepository;
+import saas_access_platform.repository.PermissionRepository;
+import saas_access_platform.repository.RolePermissionRepository;
+import saas_access_platform.repository.RoleRepository;
+import saas_access_platform.repository.UserRepository;
+import saas_access_platform.repository.UserRoleRepository;
+import saas_access_platform.security.JwtUtil;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class AuthService {
+
+    private final OrganizationRepository organizationRepository;
+    private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
+    private final RolePermissionRepository rolePermissionRepository;
+    private final UserRoleRepository userRoleRepository;
+    private final PermissionRepository permissionRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtUtil jwtUtil;
+
+    @Transactional
+    public String registerOrg(RegisterOrgRequest request) {
+
+        if (organizationRepository.existsByName(request.getOrgName())) {
+            throw new RuntimeException("Organization name already exists");
+        }
+
+        String slug = generateSlug(request.getOrgName());
+        if (organizationRepository.existsBySlug(slug)) {
+            throw new RuntimeException("Organization slug already exists");
+        }
+
+        Organization org = Organization.builder()
+                .name(request.getOrgName())
+                .slug(slug)
+                .status(Organization.OrgStatus.ACTIVE)
+                .requestLimitPerMinute(100)
+                .build();
+        org = organizationRepository.save(org);
+
+        List<Permission> allPermissions = permissionRepository.findAll();
+        Role adminRole = Role.builder()
+                .orgId(org.getId())
+                .name("Admin")
+                .build();
+        adminRole = roleRepository.save(adminRole);
+
+        for (Permission permission : allPermissions) {
+            rolePermissionRepository.save(
+                    saas_access_platform.entity.RolePermission.builder()
+                            .roleId(adminRole.getId())
+                            .permissionId(permission.getId())
+                            .build()
+            );
+        }
+
+        User adminUser = User.builder()
+                .orgId(org.getId())
+                .email(request.getAdminEmail())
+                .passwordHash(passwordEncoder.encode(request.getPassword()))
+                .status(User.UserStatus.ACTIVE)
+                .build();
+        adminUser = userRepository.save(adminUser);
+
+        UserRole userRole = UserRole.builder()
+                .userId(adminUser.getId())
+                .roleId(adminRole.getId())
+                .build();
+        userRoleRepository.save(userRole);
+
+        return jwtUtil.generateToken(
+                adminUser.getId(),
+                org.getId(),
+                adminUser.getEmail(),
+                List.of("Admin")
+        );
+    }
+
+    public String login(LoginRequest request) {
+
+        Organization org = organizationRepository
+                .findBySlug(extractSlugFromEmail(request.getEmail()))
+                .orElseThrow(() -> new RuntimeException("Invalid credentials"));
+
+        User user = userRepository
+                .findByEmailAndOrgId(request.getEmail(), org.getId())
+                .orElseThrow(() -> new RuntimeException("Invalid credentials"));
+
+        if (!passwordEncoder.matches(request.getPassword(),
+                user.getPasswordHash())) {
+            throw new RuntimeException("Invalid credentials");
+        }
+
+        List<String> roles = userRoleRepository
+                .findAllByUserId(user.getId())
+                .stream()
+                .map(userRole -> roleRepository
+                        .findById(userRole.getRoleId())
+                        .map(Role::getName)
+                        .orElse(""))
+                .filter(name -> !name.isEmpty())
+                .toList();
+
+        return jwtUtil.generateToken(
+                user.getId(),
+                org.getId(),
+                user.getEmail(),
+                roles
+        );
+    }
+
+    private String generateSlug(String orgName) {
+        return orgName.toLowerCase()
+                .trim()
+                .replaceAll("[^a-z0-9\\s-]", "")
+                .replaceAll("\\s+", "-");
+    }
+
+    private String extractSlugFromEmail(String email) {
+        return email.split("@")[1].split("\\.")[0];
+    }
+}
