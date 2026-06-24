@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import saas_access_platform.dto.request.LoginRequest;
 import saas_access_platform.dto.request.RegisterOrgRequest;
+import saas_access_platform.dto.response.AuthResponse;
 import saas_access_platform.entity.Organization;
 import saas_access_platform.entity.Permission;
 import saas_access_platform.entity.Role;
@@ -35,7 +36,7 @@ public class AuthService {
     private final JwtUtil jwtUtil;
 
     @Transactional
-    public String registerOrg(RegisterOrgRequest request) {
+    public AuthResponse registerOrg(RegisterOrgRequest request) {
 
         if (organizationRepository.existsByName(request.getOrgName())) {
             throw new RuntimeException("Organization name already exists");
@@ -84,15 +85,24 @@ public class AuthService {
                 .build();
         userRoleRepository.save(userRole);
 
-        return jwtUtil.generateToken(
+        String token = jwtUtil.generateToken(
                 adminUser.getId(),
                 org.getId(),
                 adminUser.getEmail(),
                 List.of("Admin")
         );
+
+        return AuthResponse.builder()
+                .token(token)
+                .orgSlug(org.getSlug())
+                .orgName(org.getName())
+                .orgId(org.getId())
+                .userId(adminUser.getId())
+                .email(adminUser.getEmail())
+                .build();
     }
 
-    public String login(LoginRequest request) {
+    public AuthResponse login(LoginRequest request) {
 
         Organization org = organizationRepository
                 .findBySlug(request.getOrgSlug())
@@ -117,12 +127,21 @@ public class AuthService {
                 .filter(name -> !name.isEmpty())
                 .toList();
 
-        return jwtUtil.generateToken(
+        String token = jwtUtil.generateToken(
                 user.getId(),
                 org.getId(),
                 user.getEmail(),
                 roles
         );
+
+        return AuthResponse.builder()
+                .token(token)
+                .orgSlug(org.getSlug())
+                .orgName(org.getName())
+                .orgId(org.getId())
+                .userId(user.getId())
+                .email(user.getEmail())
+                .build();
     }
 
     private String generateSlug(String orgName) {
