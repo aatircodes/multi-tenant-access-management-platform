@@ -95,7 +95,7 @@ public class AuthService {
     public String login(LoginRequest request) {
 
         Organization org = organizationRepository
-                .findBySlug(extractSlugFromEmail(request.getEmail()))
+                .findBySlug(request.getOrgSlug())
                 .orElseThrow(() -> new RuntimeException("Invalid credentials"));
 
         User user = userRepository
@@ -130,9 +130,5 @@ public class AuthService {
                 .trim()
                 .replaceAll("[^a-z0-9\\s-]", "")
                 .replaceAll("\\s+", "-");
-    }
-
-    private String extractSlugFromEmail(String email) {
-        return email.split("@")[1].split("\\.")[0];
     }
 }
