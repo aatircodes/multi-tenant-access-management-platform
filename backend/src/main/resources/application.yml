@@ -2,7 +2,7 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/tenant_platform
     username: root
-    password: root
+    password: 391281*MySQL@
   jpa:
     hibernate:
       ddl-auto: update
@@ -10,6 +10,7 @@ spring:
     properties:
       hibernate:
         format_sql: true
+    defer-datasource-initialization: true
   sql:
     init:
       mode: always
@@ -20,3 +21,5 @@ server:
 jwt:
   secret: ${JWT_SECRET:7f3k9pX2mN8qR5vL1wE6yH4jB0cT3uA9sD2fG7hK1nM5oP8rU4xZ6iQ0tW3eY}
   expiration-ms: 86400000
+
+
