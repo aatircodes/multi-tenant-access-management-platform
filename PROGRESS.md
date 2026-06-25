@@ -12,7 +12,7 @@ saas_access_platform
 ## Current branch
 main
 
-## Approach going forward
+## Approach
 Build just-in-time — DTO + Service + Controller together per endpoint,
 test in Postman before moving to next endpoint.
 
@@ -20,17 +20,18 @@ test in Postman before moving to next endpoint.
 
 ## Completed
 
-### Phase 0 — Setup
+### Phase 0 — Setup ✅
 - Spring Boot project initialized
-- application.yml configured (MySQL connection)
+- application.yml configured (MySQL + JWT config)
 - docker-compose.yml created (MySQL + Redis for later)
 - .gitignore configured
-- README.md skeleton created
+- README.md created
 - PROGRESS.md created
+- data.sql created (seeds 6 permissions on startup)
 
-### Phase 1 — In Progress
+### Phase 1 — Auth + Foundation ✅
 
-#### Entities done (9/9)
+#### Entities (9/9)
 1. Organization.java
 2. User.java
 3. Role.java
@@ -41,7 +42,7 @@ test in Postman before moving to next endpoint.
 8. Invitation.java
 9. AuditLog.java
 
-#### Repositories done (9/9)
+#### Repositories (9/9)
 1. OrganizationRepository.java
 2. UserRepository.java
 3. RoleRepository.java
@@ -52,9 +53,9 @@ test in Postman before moving to next endpoint.
 8. InvitationRepository.java
 9. AuditLogRepository.java
 
-#### Request DTOs done (8/8)
+#### Request DTOs (8/8)
 1. RegisterOrgRequest.java
-2. LoginRequest.java
+2. LoginRequest.java (includes orgSlug field)
 3. InviteUserRequest.java
 4. AcceptInvitationRequest.java
 5. CreateRoleRequest.java
@@ -62,26 +63,53 @@ test in Postman before moving to next endpoint.
 7. UpdateOrgSettingsRequest.java
 8. CreateResourceRequest.java
 
-#### Remaining — Phase 1
-- [ ] SecurityConfig
-- [ ] JwtUtil
-- [ ] JwtAuthFilter
-- [ ] AuthResponse (response DTO)
-- [ ] AuthService (register-org + login logic)
-- [ ] AuthController (/register-org + /login endpoints)
-- [ ] Test register-org in Postman
-- [ ] Test login in Postman
+#### Response DTOs (2/2)
+1. AuthResponse.java (token + orgSlug + orgName + orgId + userId + email)
+2. ErrorResponse.java (status + message + timestamp)
+
+#### Security Layer (4/4)
+1. SecurityConfig.java (stateless JWT, /api/auth/** public)
+2. JwtUtil.java (generate + parse + validate tokens)
+3. JwtAuthFilter.java (reads JWT, builds CurrentUserContext)
+4. CurrentUserContext.java (carries userId, orgId, email, roles)
+
+#### Service + Controller (1/1)
+1. AuthService.java (registerOrg + login)
+2. AuthController.java (POST /api/auth/register-org, POST /api/auth/login)
+
+#### Exception Handling (1/1)
+1. GlobalExceptionHandler.java
+
+#### Postman Tests (all passing ✅)
+- Register org → 201 + JWT returned
+- Login → 200 + JWT returned
+- Wrong password → 400 "Invalid credentials"
+- Wrong org slug → 400 "Invalid credentials"
+- Empty password → 400 validation error
+- Duplicate org registration → 400 "Organization name already exists"
+
+---
+
+## Next — Phase 2: Tenant Isolation
+
+### What to build
+- [ ] TenantContext.java (ThreadLocal holder for current org_id)
+- [ ] TenantFilter.java (OncePerRequestFilter, enables Hibernate filter per request)
+- [ ] Add @FilterDef + @Filter to Resource entity
+- [ ] ResourceService.java (CRUD with service-layer ownership assertion)
+- [ ] ResourceController.java (CRUD endpoints)
+- [ ] Test cross-tenant access → confirm 404 not 403
+
+### Key concepts for Phase 2
+- Hibernate @Filter auto-appends WHERE org_id=? to every query
+- TenantFilter reads org_id from JWT and enables the Hibernate filter
+- Service layer additionally checks resource.getOrgId() == currentOrgId
+- Cross-tenant access returns 404 (not 403) — no existence leakage
+- org_id is NEVER accepted from client — always from JWT
 
 ---
 
 ## Remaining Phases
-
-### Phase 2 — Tenant Isolation
-- [ ] TenantContext.java (ThreadLocal holder for org_id)
-- [ ] TenantFilter.java (OncePerRequestFilter, enables Hibernate filter)
-- [ ] Add @Filter and @FilterDef to Resource entity
-- [ ] Service-layer ownership assertion on every fetch-by-ID
-- [ ] Cross-tenant access test (404 not 403)
 
 ### Phase 3 — RBAC
 - [ ] CustomPermissionEvaluator.java
@@ -101,7 +129,7 @@ test in Postman before moving to next endpoint.
 - [ ] TokenBucketLimiter.java
 - [ ] SlidingWindowLimiter.java
 - [ ] Lua script for atomic Redis increment
-- [ ] 429 response with Retry-After headers
+- [ ] 429 response with Retry-After + X-RateLimit-Remaining headers
 - [ ] UsageController (/api/usage endpoint)
 
 ### Phase 6 — React Frontend
@@ -130,14 +158,3 @@ test in Postman before moving to next endpoint.
 - [ ] Add app to docker-compose
 - [ ] Deploy to Render/Railway
 - [ ] Add live demo link to README
-
----
-
-## Next immediate step
-Build register-org endpoint:
-1. AuthResponse.java (response DTO)
-2. SecurityConfig.java (disable default Spring Security temporarily)
-3. JwtUtil.java (token generation)
-4. AuthService.java (register-org logic)
-5. AuthController.java (/api/auth/register-org endpoint)
-6. Test in Postman
