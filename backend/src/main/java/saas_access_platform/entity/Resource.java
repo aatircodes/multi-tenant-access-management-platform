@@ -5,6 +5,9 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
 
 import java.time.LocalDateTime;
 
@@ -14,6 +17,14 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@FilterDef(
+        name = "tenantFilter",
+        parameters = @ParamDef(name = "orgId", type = Long.class)
+)
+@Filter(
+        name = "tenantFilter",
+        condition = "org_id = :orgId"
+)
 public class Resource {
 
     @Id
