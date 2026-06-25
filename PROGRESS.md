@@ -13,8 +13,8 @@ saas_access_platform
 main
 
 ## Approach
-Build just-in-time — DTO + Service + Controller together per endpoint,
-test in Postman before moving to next endpoint.
+Build just-in-time — Controller → Service → Repository (request flow),
+test in Postman before moving to next phase.
 
 ---
 
@@ -69,8 +69,8 @@ test in Postman before moving to next endpoint.
 
 #### Security Layer (4/4)
 1. SecurityConfig.java (stateless JWT, /api/auth/** public)
-2. JwtUtil.java (generate + parse + validate tokens)
-3. JwtAuthFilter.java (reads JWT, builds CurrentUserContext)
+2. JwtUtil.java (generate + parse + validate + extractOrgId)
+3. JwtAuthFilter.java (reads JWT, builds CurrentUserContext as principal)
 4. CurrentUserContext.java (carries userId, orgId, email, roles)
 
 #### Service + Controller (1/1)
@@ -90,32 +90,77 @@ test in Postman before moving to next endpoint.
 
 ---
 
-## Next — Phase 2: Tenant Isolation
+### Phase 2 — Tenant Isolation ✅ (pending Postman tests)
 
-### What to build
-- [ ] TenantContext.java (ThreadLocal holder for current org_id)
-- [ ] TenantFilter.java (OncePerRequestFilter, enables Hibernate filter per request)
-- [ ] Add @FilterDef + @Filter to Resource entity
-- [ ] ResourceService.java (CRUD with service-layer ownership assertion)
-- [ ] ResourceController.java (CRUD endpoints)
-- [ ] Test cross-tenant access → confirm 404 not 403
+#### Package structure
 
-### Key concepts for Phase 2
-- Hibernate @Filter auto-appends WHERE org_id=? to every query
-- TenantFilter reads org_id from JWT and enables the Hibernate filter
-- Service layer additionally checks resource.getOrgId() == currentOrgId
-- Cross-tenant access returns 404 (not 403) — no existence leakage
-- org_id is NEVER accepted from client — always from JWT
+saas_access_platform/
+├── config/
+│   ├── SecurityConfig.java
+│   └── TenantFilterConfig.java
+├── context/
+│   └── TenantContext.java
+├── controller/
+│   ├── AuthController.java
+│   └── ResourceController.java
+├── dto/
+│   └── request/
+│       └── UpdateResourceRequest.java (+ all Phase 1 DTOs)
+├── entity/
+│   └── Resource.java (updated with @FilterDef + @Filter)
+├── exception/
+│   ├── GlobalExceptionHandler.java
+│   └── ResourceNotFoundException.java
+├── repository/
+│   └── ResourceRepository.java
+├── security/
+│   ├── CurrentUserContext.java
+│   ├── JwtAuthFilter.java
+│   ├── JwtUtil.java
+│   └── TenantFilter.java
+└── service/
+└── ResourceService.java
+
+#### Built (7/7)
+1. TenantContext.java — ThreadLocal orgId holder, lives in context/, uses .remove() for cleanup
+2. TenantFilter.java — OncePerRequestFilter, extracts orgId from JWT, sets TenantContext, clears in finally
+3. SecurityConfig.java — updated, TenantFilter registered after JwtAuthFilter via addFilterAfter
+4. Resource.java — updated with @FilterDef + @Filter, condition: WHERE org_id = :orgId
+5. TenantFilterConfig.java — AOP @Before bean, enables Hibernate filter on every repository call
+6. UpdateResourceRequest.java — new request DTO
+7. ResourceController.java — 6 endpoints: create, getAll, getById, update, delete, search
+8. ResourceNotFoundException.java — in exception/
+9. ResourceService.java — tenant-scoped CRUD + search, orgId always from CurrentUserContext
+
+#### Key design decisions
+- orgId is NEVER accepted from client — always from JWT via CurrentUserContext
+- getResourceById uses findByIdAndOrgId → 404 not 403 on cross-tenant access
+- Two layers of isolation: Hibernate @Filter (implicit) + service ownership check (explicit)
+- TenantContext in context/ (Spring Security unaware) vs CurrentUserContext in security/ (Spring Security aware)
+- TenantFilter try/finally guarantees ThreadLocal cleanup even on exceptions
+
+#### Postman Tests (pending ✅)
+- [ ] Create resource → 201
+- [ ] Get all resources → only own tenant's resources returned
+- [ ] Get resource by ID → 200
+- [ ] Get resource by ID (cross-tenant) → 404
+- [ ] Update resource → 200
+- [ ] Delete resource → 204
+- [ ] Search by name → filtered results
 
 ---
 
-## Remaining Phases
+## Next — Phase 3: RBAC
 
-### Phase 3 — RBAC
+### What to build
 - [ ] CustomPermissionEvaluator.java
 - [ ] @PreAuthorize on resource endpoints
 - [ ] Role management endpoints (create role, assign permissions)
 - [ ] Permission boundary test (403 for wrong role)
+
+---
+
+## Remaining Phases
 
 ### Phase 4 — Invitations + Audit Log
 - [ ] InvitationService + InvitationController
