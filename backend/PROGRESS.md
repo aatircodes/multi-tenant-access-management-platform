@@ -92,35 +92,6 @@ test in Postman before moving to next phase.
 
 ### Phase 2 — Tenant Isolation ✅ (pending Postman tests)
 
-#### Package structure
-
-saas_access_platform/
-├── config/
-│   ├── SecurityConfig.java
-│   └── TenantFilterConfig.java
-├── context/
-│   └── TenantContext.java
-├── controller/
-│   ├── AuthController.java
-│   └── ResourceController.java
-├── dto/
-│   └── request/
-│       └── UpdateResourceRequest.java (+ all Phase 1 DTOs)
-├── entity/
-│   └── Resource.java (updated with @FilterDef + @Filter)
-├── exception/
-│   ├── GlobalExceptionHandler.java
-│   └── ResourceNotFoundException.java
-├── repository/
-│   └── ResourceRepository.java
-├── security/
-│   ├── CurrentUserContext.java
-│   ├── JwtAuthFilter.java
-│   ├── JwtUtil.java
-│   └── TenantFilter.java
-└── service/
-└── ResourceService.java
-
 #### Built (7/7)
 1. TenantContext.java — ThreadLocal orgId holder, lives in context/, uses .remove() for cleanup
 2. TenantFilter.java — OncePerRequestFilter, extracts orgId from JWT, sets TenantContext, clears in finally
