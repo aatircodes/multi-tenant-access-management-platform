@@ -21,7 +21,7 @@ test in Postman before moving to next phase.
 ## Completed
 
 ### Phase 0 — Setup ✅
-- Spring Boot project initialized
+- Spring Boot 3.4.5 + Java 21 project initialized
 - application.yml configured (MySQL + JWT config)
 - docker-compose.yml created (MySQL + Redis for later)
 - .gitignore configured
@@ -73,7 +73,7 @@ test in Postman before moving to next phase.
 3. JwtAuthFilter.java (reads JWT, builds CurrentUserContext as principal)
 4. CurrentUserContext.java (carries userId, orgId, email, roles)
 
-#### Service + Controller (1/1)
+#### Service + Controller (2/2)
 1. AuthService.java (registerOrg + login)
 2. AuthController.java (POST /api/auth/register-org, POST /api/auth/login)
 
@@ -90,9 +90,9 @@ test in Postman before moving to next phase.
 
 ---
 
-### Phase 2 — Tenant Isolation ✅ (pending Postman tests)
+### Phase 2 — Tenant Isolation ✅
 
-#### Built (7/7)
+#### Built (9/9)
 1. TenantContext.java — ThreadLocal orgId holder, lives in context/, uses .remove() for cleanup
 2. TenantFilter.java — OncePerRequestFilter, extracts orgId from JWT, sets TenantContext, clears in finally
 3. SecurityConfig.java — updated, TenantFilter registered after JwtAuthFilter via addFilterAfter
@@ -102,6 +102,7 @@ test in Postman before moving to next phase.
 7. ResourceController.java — 6 endpoints: create, getAll, getById, update, delete, search
 8. ResourceNotFoundException.java — in exception/
 9. ResourceService.java — tenant-scoped CRUD + search, orgId always from CurrentUserContext
+10. GlobalExceptionHandler.java — updated with ResourceNotFoundException handler returning 404
 
 #### Key design decisions
 - orgId is NEVER accepted from client — always from JWT via CurrentUserContext
@@ -110,14 +111,13 @@ test in Postman before moving to next phase.
 - TenantContext in context/ (Spring Security unaware) vs CurrentUserContext in security/ (Spring Security aware)
 - TenantFilter try/finally guarantees ThreadLocal cleanup even on exceptions
 
-#### Postman Tests (pending ✅)
-- [ ] Create resource → 201
-- [ ] Get all resources → only own tenant's resources returned
-- [ ] Get resource by ID → 200
-- [ ] Get resource by ID (cross-tenant) → 404
-- [ ] Update resource → 200
-- [ ] Delete resource → 204
-- [ ] Search by name → filtered results
+#### Postman Tests (all passing ✅)
+- ✅ Create resource → 201, orgId from JWT not client
+- ✅ Get all resources → only own tenant's resources returned
+- ✅ Get resource by ID → 200
+- ✅ Update resource → 200
+- ✅ Search by name → filtered results
+- ✅ Cross-tenant access (HealthCorp token → TechCorp resource) → 404 not 403
 
 ---
 
