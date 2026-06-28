@@ -2,14 +2,10 @@ package saas_access_platform.service;
 
 import saas_access_platform.dto.request.CreateRoleRequest;
 import saas_access_platform.dto.response.RoleResponse;
-import saas_access_platform.entity.Role;
-import saas_access_platform.entity.User;
-import saas_access_platform.entity.UserRole;
+import saas_access_platform.entity.*;
 import saas_access_platform.exception.DuplicateAssignmentException;
 import saas_access_platform.exception.ResourceNotFoundException;
-import saas_access_platform.repository.RoleRepository;
-import saas_access_platform.repository.UserRepository;
-import saas_access_platform.repository.UserRoleRepository;
+import saas_access_platform.repository.*;
 import saas_access_platform.security.CurrentUserContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -24,6 +20,8 @@ public class RoleService {
     private final RoleRepository roleRepository;
     private final UserRoleRepository userRoleRepository;
     private final UserRepository userRepository;
+    private final PermissionRepository permissionRepository;
+    private final RolePermissionRepository rolePermissionRepository;
 
     public RoleResponse createRole(CreateRoleRequest request) {
         CurrentUserContext currentUser = (CurrentUserContext)
@@ -80,5 +78,30 @@ public class RoleService {
                 .build();
 
         userRoleRepository.save(userRole);
+    }
+
+    public void assignPermissionToRole(Long roleId, Long permissionId) {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        // Verify role belongs to this org
+        Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        // Verify permission exists
+        Permission permission = permissionRepository.findById(permissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Permission not found"));
+
+        // Prevent duplicate assignment
+        if (rolePermissionRepository.existsByRoleIdAndPermissionId(role.getId(), permission.getId())) {
+            throw new DuplicateAssignmentException("Permission already assigned to this role");
+        }
+
+        RolePermission rolePermission = RolePermission.builder()
+                .roleId(role.getId())
+                .permissionId(permission.getId())
+                .build();
+
+        rolePermissionRepository.save(rolePermission);
     }
 }
