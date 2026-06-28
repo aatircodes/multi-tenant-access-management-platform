@@ -1,6 +1,7 @@
 package saas_access_platform.controller;
 
 import saas_access_platform.dto.request.CreateRoleRequest;
+import saas_access_platform.dto.response.PermissionResponse;
 import saas_access_platform.dto.response.RoleResponse;
 import saas_access_platform.service.RoleService;
 import lombok.RequiredArgsConstructor;
@@ -46,5 +47,11 @@ public class RoleController {
             @PathVariable Long permissionId) {
         roleService.assignPermissionToRole(roleId, permissionId);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{roleId}/permissions")
+    @PreAuthorize("hasPermission(null, 'ROLE_READ')")
+    public ResponseEntity<List<PermissionResponse>> getRolePermissions(@PathVariable Long roleId) {
+        return ResponseEntity.ok(roleService.getRolePermissions(roleId));
     }
 }
