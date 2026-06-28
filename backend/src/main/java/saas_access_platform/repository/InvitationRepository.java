@@ -12,4 +12,5 @@ public interface InvitationRepository
     List<Invitation> findAllByOrgId(Long orgId);
     boolean existsByEmailAndOrgId(String email, Long orgId);
     Optional<Invitation> findByEmailAndOrgId(String email, Long orgId);
+    boolean existsByEmailAndOrgIdAndStatus(String email, Long orgId, String status);
 }
