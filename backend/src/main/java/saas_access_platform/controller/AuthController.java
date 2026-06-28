@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import saas_access_platform.dto.request.LoginRequest;
 import saas_access_platform.dto.request.RegisterOrgRequest;
 import saas_access_platform.dto.response.AuthResponse;
+import saas_access_platform.dto.response.RegisterOrgResponse;
 import saas_access_platform.service.AuthService;
 
 @RestController
@@ -21,10 +22,10 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/register-org")
-    public ResponseEntity<AuthResponse> registerOrg(
+    public ResponseEntity<RegisterOrgResponse> registerOrg(
             @Valid @RequestBody RegisterOrgRequest request) {
-        AuthResponse response = authService.registerOrg(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(authService.registerOrg(request));
     }
 
     @PostMapping("/login")
