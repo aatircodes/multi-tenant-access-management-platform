@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import saas_access_platform.dto.request.CreateResourceRequest;
 import saas_access_platform.dto.request.UpdateResourceRequest;
@@ -20,6 +21,7 @@ public class ResourceController {
     private final ResourceService resourceService;
 
     @PostMapping
+    @PreAuthorize("hasPermission(null, 'RESOURCE_CREATE')")
     public ResponseEntity<Resource> createResource(
             @Valid @RequestBody CreateResourceRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -27,16 +29,19 @@ public class ResourceController {
     }
 
     @GetMapping
+    @PreAuthorize("hasPermission(null, 'RESOURCE_READ')")
     public ResponseEntity<List<Resource>> getAllResources() {
         return ResponseEntity.ok(resourceService.getAllResources());
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasPermission(null, 'RESOURCE_READ')")
     public ResponseEntity<Resource> getResourceById(@PathVariable Long id) {
         return ResponseEntity.ok(resourceService.getResourceById(id));
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasPermission(null, 'RESOURCE_UPDATE')")
     public ResponseEntity<Resource> updateResource(
             @PathVariable Long id,
             @Valid @RequestBody UpdateResourceRequest request) {
@@ -44,12 +49,14 @@ public class ResourceController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasPermission(null, 'RESOURCE_DELETE')")
     public ResponseEntity<Void> deleteResource(@PathVariable Long id) {
         resourceService.deleteResource(id);
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/search")
+    @PreAuthorize("hasPermission(null, 'RESOURCE_READ')")
     public ResponseEntity<List<Resource>> searchByName(
             @RequestParam String name) {
         return ResponseEntity.ok(resourceService.searchByName(name));
