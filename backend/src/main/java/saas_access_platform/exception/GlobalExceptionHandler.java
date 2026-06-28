@@ -53,4 +53,15 @@ public class GlobalExceptionHandler {
                         .timestamp(LocalDateTime.now())
                         .build());
     }
+
+    @ExceptionHandler(DuplicateAssignmentException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateAssignment(DuplicateAssignmentException ex) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(ErrorResponse.builder()
+                        .status(HttpStatus.CONFLICT.value())
+                        .message(ex.getMessage())
+                        .timestamp(LocalDateTime.now())
+                        .build());
+    }
 }
