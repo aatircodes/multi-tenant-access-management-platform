@@ -20,6 +20,13 @@ import saas_access_platform.repository.RoleRepository;
 import saas_access_platform.repository.UserRepository;
 import saas_access_platform.repository.UserRoleRepository;
 import saas_access_platform.security.JwtUtil;
+import saas_access_platform.dto.request.AcceptInvitationRequest;
+import saas_access_platform.entity.Invitation;
+import saas_access_platform.exception.InvalidInvitationException;
+import saas_access_platform.repository.InvitationRepository;
+
+import java.time.LocalDateTime;
+import java.util.stream.Collectors;
 
 import java.util.List;
 
@@ -35,6 +42,7 @@ public class AuthService {
     private final PermissionRepository permissionRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final InvitationRepository invitationRepository;
 
     @Transactional
     public RegisterOrgResponse registerOrg(RegisterOrgRequest request) {
@@ -131,6 +139,66 @@ public class AuthService {
                 .orgId(org.getId())
                 .userId(user.getId())
                 .email(user.getEmail())
+                .build();
+    }
+
+    @Transactional
+    public LoginResponse acceptInvitation(AcceptInvitationRequest request) {
+
+        Invitation invitation = invitationRepository.findByToken(request.getToken())
+                .orElseThrow(() -> new InvalidInvitationException("Invalid invitation token"));
+
+        if (invitation.getStatus() != Invitation.InvitationStatus.PENDING) {
+            throw new InvalidInvitationException("Invitation has already been used");
+        }
+
+        if (invitation.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new InvalidInvitationException("Invitation has expired");
+        }
+
+        User user = new User();
+        user.setOrgId(invitation.getOrgId());
+        user.setEmail(invitation.getEmail());
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setStatus(User.UserStatus.ACTIVE);
+
+        User savedUser = userRepository.save(user);
+
+        UserRole userRole = new UserRole();
+        userRole.setUserId(savedUser.getId());
+        userRole.setRoleId(invitation.getRoleId());
+        userRole.setAssignedAt(LocalDateTime.now());
+
+        userRoleRepository.save(userRole);
+
+        invitation.setStatus(Invitation.InvitationStatus.ACCEPTED);
+        invitationRepository.save(invitation);
+
+        Organization org = organizationRepository.findById(invitation.getOrgId())
+                .orElseThrow(() -> new RuntimeException("Organization not found"));
+
+        List<String> roles = userRoleRepository.findAllByUserId(savedUser.getId())
+                .stream()
+                .map(ur -> roleRepository.findById(ur.getRoleId())
+                        .map(Role::getName)
+                        .orElse(""))
+                .filter(name -> !name.isEmpty())
+                .collect(Collectors.toList());
+
+        String token = jwtUtil.generateToken(
+                savedUser.getId(),
+                org.getId(),
+                savedUser.getEmail(),
+                roles
+        );
+
+        return LoginResponse.builder()
+                .token(token)
+                .orgSlug(org.getSlug())
+                .orgName(org.getName())
+                .orgId(org.getId())
+                .userId(savedUser.getId())
+                .email(savedUser.getEmail())
                 .build();
     }
 
