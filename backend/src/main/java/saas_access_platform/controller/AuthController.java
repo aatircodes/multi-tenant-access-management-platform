@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import saas_access_platform.dto.request.LoginRequest;
 import saas_access_platform.dto.request.RegisterOrgRequest;
-import saas_access_platform.dto.response.AuthResponse;
+import saas_access_platform.dto.response.LoginResponse;
 import saas_access_platform.dto.response.RegisterOrgResponse;
 import saas_access_platform.service.AuthService;
 
@@ -29,9 +29,9 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(
+    public ResponseEntity<LoginResponse> login(
             @Valid @RequestBody LoginRequest request) {
-        AuthResponse response = authService.login(request);
+        LoginResponse response = authService.login(request);
         return ResponseEntity.ok(response);
     }
 }

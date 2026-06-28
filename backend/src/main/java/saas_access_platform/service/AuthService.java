@@ -6,7 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import saas_access_platform.dto.request.LoginRequest;
 import saas_access_platform.dto.request.RegisterOrgRequest;
-import saas_access_platform.dto.response.AuthResponse;
+import saas_access_platform.dto.response.LoginResponse;
 import saas_access_platform.dto.response.RegisterOrgResponse;
 import saas_access_platform.entity.Organization;
 import saas_access_platform.entity.Permission;
@@ -92,7 +92,7 @@ public class AuthService {
                 .build();
     }
 
-    public AuthResponse login(LoginRequest request) {
+    public LoginResponse login(LoginRequest request) {
 
         Organization org = organizationRepository
                 .findBySlug(request.getOrgSlug())
@@ -124,7 +124,7 @@ public class AuthService {
                 roles
         );
 
-        return AuthResponse.builder()
+        return LoginResponse.builder()
                 .token(token)
                 .orgSlug(org.getSlug())
                 .orgName(org.getName())
