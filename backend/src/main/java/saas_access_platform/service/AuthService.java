@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import saas_access_platform.dto.request.LoginRequest;
 import saas_access_platform.dto.request.RegisterOrgRequest;
 import saas_access_platform.dto.response.AuthResponse;
+import saas_access_platform.dto.response.RegisterOrgResponse;
 import saas_access_platform.entity.Organization;
 import saas_access_platform.entity.Permission;
 import saas_access_platform.entity.Role;
@@ -36,7 +37,7 @@ public class AuthService {
     private final JwtUtil jwtUtil;
 
     @Transactional
-    public AuthResponse registerOrg(RegisterOrgRequest request) {
+    public RegisterOrgResponse registerOrg(RegisterOrgRequest request) {
 
         if (organizationRepository.existsByName(request.getOrgName())) {
             throw new RuntimeException("Organization name already exists");
@@ -85,20 +86,9 @@ public class AuthService {
                 .build();
         userRoleRepository.save(userRole);
 
-        String token = jwtUtil.generateToken(
-                adminUser.getId(),
-                org.getId(),
-                adminUser.getEmail(),
-                List.of("Admin")
-        );
-
-        return AuthResponse.builder()
-                .token(token)
+        return RegisterOrgResponse.builder()
+                .message("Organisation registered successfully")
                 .orgSlug(org.getSlug())
-                .orgName(org.getName())
-                .orgId(org.getId())
-                .userId(adminUser.getId())
-                .email(adminUser.getEmail())
                 .build();
     }
 
