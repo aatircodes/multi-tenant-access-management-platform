@@ -9,6 +9,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/roles")
 @RequiredArgsConstructor
@@ -20,5 +22,11 @@ public class RoleController {
     @PreAuthorize("hasPermission(null, 'ROLE_CREATE')")
     public ResponseEntity<RoleResponse> createRole(@RequestBody CreateRoleRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(roleService.createRole(request));
+    }
+
+    @GetMapping
+    @PreAuthorize("hasPermission(null, 'ROLE_READ')")
+    public ResponseEntity<List<RoleResponse>> getAllRoles() {
+        return ResponseEntity.ok(roleService.getAllRoles());
     }
 }
