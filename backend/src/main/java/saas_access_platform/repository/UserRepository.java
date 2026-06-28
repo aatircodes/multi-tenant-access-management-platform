@@ -9,4 +9,5 @@ public interface UserRepository
 
     Optional<User> findByEmailAndOrgId(String email, Long orgId);
     boolean existsByEmailAndOrgId(String email, Long orgId);
+    Optional<User> findByIdAndOrgId(Long id, Long orgId);
 }
