@@ -11,4 +11,5 @@ public interface RoleRepository
     List<Role> findAllByOrgId(Long orgId);
     Optional<Role> findByNameAndOrgId(String name, Long orgId);
     boolean existsByNameAndOrgId(String name, Long orgId);
+    Optional<Role> findByIdAndOrgId(Long id, Long orgId);
 }
