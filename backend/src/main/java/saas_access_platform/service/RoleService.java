@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class RoleService {
@@ -32,5 +34,20 @@ public class RoleService {
                 .orgId(saved.getOrgId())
                 .createdAt(saved.getCreatedAt())
                 .build();
+    }
+
+    public List<RoleResponse> getAllRoles() {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        return roleRepository.findAllByOrgId(currentUser.getOrgId())
+                .stream()
+                .map(role -> RoleResponse.builder()
+                        .id(role.getId())
+                        .name(role.getName())
+                        .orgId(role.getOrgId())
+                        .createdAt(role.getCreatedAt())
+                        .build())
+                .toList();
     }
 }
