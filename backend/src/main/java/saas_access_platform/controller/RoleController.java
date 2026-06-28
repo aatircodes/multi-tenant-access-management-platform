@@ -29,4 +29,13 @@ public class RoleController {
     public ResponseEntity<List<RoleResponse>> getAllRoles() {
         return ResponseEntity.ok(roleService.getAllRoles());
     }
+
+    @PostMapping("/{roleId}/assign/{userId}")
+    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    public ResponseEntity<Void> assignRoleToUser(
+            @PathVariable Long roleId,
+            @PathVariable Long userId) {
+        roleService.assignRoleToUser(roleId, userId);
+        return ResponseEntity.noContent().build();
+    }
 }
