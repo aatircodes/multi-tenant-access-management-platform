@@ -14,7 +14,7 @@ main
 
 ## Approach
 Build just-in-time — Controller → Service → Repository (request flow),
-test in Postman before moving to next phase.
+one endpoint at a time (Controller + Service together), test in Postman before moving to next phase.
 
 ---
 
@@ -23,11 +23,13 @@ test in Postman before moving to next phase.
 ### Phase 0 — Setup ✅
 - Spring Boot 3.4.5 + Java 21 project initialized
 - application.yml configured (MySQL + JWT config)
-- docker-compose.yml created (MySQL + Redis for later)
-- .gitignore configured
-- README.md created
-- PROGRESS.md created
-- data.sql created (seeds 6 permissions on startup)
+- docker-compose.yml created (MySQL + Redis for later), moved to repo root
+- .gitignore configured at repo root (monorepo structure)
+- README.md created, moved to repo root
+- PROGRESS.md created, moved to repo root
+- data.sql created (seeds 9 permissions on startup)
+
+---
 
 ### Phase 1 — Auth + Foundation ✅
 
@@ -55,7 +57,7 @@ test in Postman before moving to next phase.
 
 #### Request DTOs (8/8)
 1. RegisterOrgRequest.java
-2. LoginRequest.java (includes orgSlug field)
+2. LoginRequest.java (email + password + orgSlug)
 3. InviteUserRequest.java
 4. AcceptInvitationRequest.java
 5. CreateRoleRequest.java
@@ -63,26 +65,32 @@ test in Postman before moving to next phase.
 7. UpdateOrgSettingsRequest.java
 8. CreateResourceRequest.java
 
-#### Response DTOs (2/2)
-1. AuthResponse.java (token + orgSlug + orgName + orgId + userId + email)
-2. ErrorResponse.java (status + message + timestamp)
+#### Response DTOs (4/4)
+1. LoginResponse.java (token + orgSlug + orgName + orgId + userId + email)
+2. RegisterOrgResponse.java (message + orgSlug)
+3. ErrorResponse.java (status + message + timestamp)
+4. RoleResponse.java (id + name + orgId + createdAt)
 
 #### Security Layer (4/4)
 1. SecurityConfig.java (stateless JWT, /api/auth/** public)
-2. JwtUtil.java (generate + parse + validate + extractOrgId)
+2. JwtUtil.java (generate + parse + validate + extractOrgId + extractUserId + extractEmail + extractRoles)
 3. JwtAuthFilter.java (reads JWT, builds CurrentUserContext as principal)
 4. CurrentUserContext.java (carries userId, orgId, email, roles)
 
 #### Service + Controller (2/2)
-1. AuthService.java (registerOrg + login)
-2. AuthController.java (POST /api/auth/register-org, POST /api/auth/login)
+1. AuthService.java
+   - registerOrg → provisions org, creates Admin role with all permissions, returns RegisterOrgResponse (no token)
+   - login → validates credentials, returns LoginResponse with JWT
+2. AuthController.java
+   - POST /api/auth/register-org → 201 RegisterOrgResponse
+   - POST /api/auth/login → 200 LoginResponse
 
 #### Exception Handling (1/1)
 1. GlobalExceptionHandler.java
 
 #### Postman Tests (all passing ✅)
-- Register org → 201 + JWT returned
-- Login → 200 + JWT returned
+- Register org → 201 + message + orgSlug
+- Login → 200 + JWT
 - Wrong password → 400 "Invalid credentials"
 - Wrong org slug → 400 "Invalid credentials"
 - Empty password → 400 validation error
@@ -117,27 +125,74 @@ test in Postman before moving to next phase.
 - ✅ Get resource by ID → 200
 - ✅ Update resource → 200
 - ✅ Search by name → filtered results
-- ✅ Cross-tenant access (HealthCorp token → TechCorp resource) → 404 not 403
+- ✅ Cross-tenant access → 404 not 403
 
 ---
 
-## Next — Phase 3: RBAC
+### Phase 3 — RBAC ✅
+
+#### Built
+1. CustomPermissionEvaluator.java — implements PermissionEvaluator, checks userId → roleIds → permissionCode
+2. MethodSecurityConfig.java — @EnableMethodSecurity, registers CustomPermissionEvaluator as @Bean
+3. UserRoleRepository.java — added findRoleIdsByUserId query
+4. RolePermissionRepository.java — added existsByRoleIdInAndPermissionCode query
+5. RoleController.java — 5 endpoints
+6. RoleService.java — role management logic
+7. RoleResponse.java — id + name + orgId + createdAt
+8. PermissionResponse.java — id + code + description
+9. DuplicateAssignmentException.java — 409 Conflict
+10. GlobalExceptionHandler.java — updated with DuplicateAssignmentException handler
+11. ResourceController.java — updated with @PreAuthorize on all 6 endpoints
+12. data.sql — updated to 9 fine-grained permission codes
+
+#### Endpoints
+- POST /api/roles → create role (ROLE_CREATE)
+- GET /api/roles → get all roles for org (ROLE_READ)
+- POST /api/roles/{roleId}/assign/{userId} → assign role to user (ROLE_ASSIGN)
+- POST /api/roles/{roleId}/permissions/{permissionId} → assign permission to role (ROLE_ASSIGN)
+- GET /api/roles/{roleId}/permissions → get permissions for role (ROLE_READ)
+
+#### Resource endpoints now permission-guarded
+- POST /api/resources → RESOURCE_CREATE
+- GET /api/resources → RESOURCE_READ
+- GET /api/resources/{id} → RESOURCE_READ
+- PUT /api/resources/{id} → RESOURCE_UPDATE
+- DELETE /api/resources/{id} → RESOURCE_DELETE
+- GET /api/resources/search → RESOURCE_READ
+
+#### Key design decisions
+- Permission check at method boundary via @PreAuthorize — not inside service logic
+- Permissions are system-level (not org-scoped); roles are org-scoped
+- Org boundary enforced at role level — permission binding is org-scoped because the role is
+- 403 returned for permission denied (user exists but not allowed) vs 404 for cross-tenant (resource existence not leaked)
+- AuthService auto-bootstraps Admin role with all permissions on org registration
+
+#### Postman Tests (all passing ✅)
+- ✅ Create role → 201
+- ✅ Get all roles → 200, only org's roles returned
+- ✅ Assign permission to role → 204
+- ✅ Duplicate permission assignment → 409 Conflict
+- ✅ Get role permissions → 200 with correct permissions
+
+#### Pending (to complete after Phase 4 invitation flow)
+- [ ] Login as VIEWER user (created via invitation)
+- [ ] GET /api/resources with VIEWER token → 200
+- [ ] POST /api/resources with VIEWER token → 403
+
+---
+
+## Next — Phase 4: Invitations + Audit Log
 
 ### What to build
-- [ ] CustomPermissionEvaluator.java
-- [ ] @PreAuthorize on resource endpoints
-- [ ] Role management endpoints (create role, assign permissions)
-- [ ] Permission boundary test (403 for wrong role)
+- [ ] POST /api/invitations — admin invites user, generates token, returns token in response
+- [ ] POST /api/auth/accept-invitation — user accepts invite, sets password, account created
+- [ ] POST /api/roles/{roleId}/assign/{userId} — assign role to invited user
+- [ ] AuditAspect.java — AOP-based audit logging
+- [ ] GET /api/audit-logs — admin-only audit log viewer
 
 ---
 
 ## Remaining Phases
-
-### Phase 4 — Invitations + Audit Log
-- [ ] InvitationService + InvitationController
-- [ ] Token generation + expiry logic
-- [ ] AuditAspect.java (AOP-based logging)
-- [ ] AuditLogController (admin-only viewer)
 
 ### Phase 5 — Rate Limiting
 - [ ] Install and configure Redis
