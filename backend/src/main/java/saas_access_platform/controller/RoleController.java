@@ -38,4 +38,13 @@ public class RoleController {
         roleService.assignRoleToUser(roleId, userId);
         return ResponseEntity.noContent().build();
     }
+
+    @PostMapping("/{roleId}/permissions/{permissionId}")
+    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    public ResponseEntity<Void> assignPermissionToRole(
+            @PathVariable Long roleId,
+            @PathVariable Long permissionId) {
+        roleService.assignPermissionToRole(roleId, permissionId);
+        return ResponseEntity.noContent().build();
+    }
 }
