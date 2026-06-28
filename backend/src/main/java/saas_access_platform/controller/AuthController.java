@@ -13,6 +13,7 @@ import saas_access_platform.dto.request.RegisterOrgRequest;
 import saas_access_platform.dto.response.LoginResponse;
 import saas_access_platform.dto.response.RegisterOrgResponse;
 import saas_access_platform.service.AuthService;
+import saas_access_platform.dto.request.AcceptInvitationRequest;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -32,6 +33,14 @@ public class AuthController {
     public ResponseEntity<LoginResponse> login(
             @Valid @RequestBody LoginRequest request) {
         LoginResponse response = authService.login(request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/accept-invitation")
+    public ResponseEntity<LoginResponse> acceptInvitation(
+            @RequestBody AcceptInvitationRequest request) {
+
+        LoginResponse response = authService.acceptInvitation(request);
         return ResponseEntity.ok(response);
     }
 }
