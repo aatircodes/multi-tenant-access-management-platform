@@ -1,6 +1,7 @@
 package saas_access_platform.service;
 
 import saas_access_platform.dto.request.CreateRoleRequest;
+import saas_access_platform.dto.response.PermissionResponse;
 import saas_access_platform.dto.response.RoleResponse;
 import saas_access_platform.entity.*;
 import saas_access_platform.exception.DuplicateAssignmentException;
@@ -103,5 +104,29 @@ public class RoleService {
                 .build();
 
         rolePermissionRepository.save(rolePermission);
+    }
+
+    public List<PermissionResponse> getRolePermissions(Long roleId) {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        // Verify role belongs to this org
+        roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        List<RolePermission> rolePermissions = rolePermissionRepository.findAllByRoleId(roleId);
+
+        List<Long> permissionIds = rolePermissions.stream()
+                .map(RolePermission::getPermissionId)
+                .toList();
+
+        return permissionRepository.findAllById(permissionIds)
+                .stream()
+                .map(permission -> PermissionResponse.builder()
+                        .id(permission.getId())
+                        .code(permission.getCode())
+                        .description(permission.getDescription())
+                        .build())
+                .toList();
     }
 }
