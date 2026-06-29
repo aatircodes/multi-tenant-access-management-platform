@@ -11,26 +11,31 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 
 ## Table of Contents
 
-1. [Tech Stack](#tech-stack)
-2. [Features](#features)
-3. [Architecture](#architecture)
-4. [Database Schema](#database-schema)
-5. [API Endpoints](#api-endpoints)
-6. [Design Decisions](#design-decisions)
-7. [Build Progress](#build-progress)
-8. [Setup & Running Locally](#setup--running-locally)
-9. [Live Demo](#live-demo)
+- [Tech Stack](#tech-stack)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Database Schema](#database-schema)
+- [API Endpoints](#api-endpoints)
+- [Test Coverage](#test-coverage)
+- [Design Decisions](#design-decisions)
+- [Build Progress](#build-progress)
+- [Setup and Running Locally](#setup-and-running-locally)
+- [Live Demo](#live-demo)
 
 ---
 
 ## Tech Stack
 
-- **Backend:** Java 21, Spring Boot 3.4.5, Spring Security, Spring Data JPA, Hibernate, MySQL
-- **Auth:** JWT (stateless, HS384), BCrypt
-- **Rate Limiting:** Redis (Token Bucket + Sliding Window)
-- **Frontend:** React (Vite), Axios
-- **Infra:** Docker, Docker Compose
-- **Testing:** JUnit 5, Spring Boot Test
+| Layer | Technology |
+|---|---|
+| Language | Java 21 |
+| Framework | Spring Boot 3.4.5 |
+| Security | Spring Security, JWT (HS384), BCrypt |
+| Persistence | Spring Data JPA, Hibernate, MySQL |
+| Rate Limiting | Redis (Token Bucket + Sliding Window) |
+| Frontend | React (Vite), Axios |
+| Infrastructure | Docker, Docker Compose |
+| Testing | JUnit 5, Spring Boot Test |
 
 ---
 
@@ -39,8 +44,8 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 - Multi-tenant architecture with shared schema and complete row-level data isolation
 - JWT-based stateless authentication with org-scoped token claims
 - Data-driven RBAC — organizations define custom roles and assign permissions at runtime without any code change
-- Invitation-based user onboarding with single-use tokens and 48-hour expiry
-- Immutable audit logging for all role, permission, and resource mutations via AOP
+- Invitation-based user onboarding with single-use UUID tokens and 48-hour expiry
+- Immutable audit logging for all mutations via AOP — no manual logging in service code
 - Tenant-aware rate limiting with runtime-configurable quotas per organization
 - Two rate limiting algorithms: Token Bucket and Sliding Window
 
@@ -48,43 +53,123 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 
 ## Architecture
 
-### Tenant isolation — three independent layers
+### Tenant Isolation — Three Independent Layers
 
-Layer 1 — Hibernate @Filter (session-level, auto-scoped by org_id from JWT)
-Layer 2 — Service-layer ownership assertion on every fetch-by-ID
-Layer 3 — org_id never accepted from client — always JWT-derived
+**Layer 1 — Hibernate @Filter**
+Applied at the session level. Every query against tenant-scoped tables automatically includes
+`WHERE org_id = :orgId`. The filter is enabled before any repository call via an AOP @Before
+advice, using the orgId extracted from the JWT.
 
-Cross-tenant access returns 404, not 403.
-A 403 confirms the resource exists but is inaccessible — leaking information to an attacker.
-A 404 reveals nothing. This is standard practice in multi-tenant systems where existence itself is sensitive.
+**Layer 2 — Service-layer ownership assertion**
+On every fetch-by-ID, the service calls `findByIdAndOrgId` rather than `findById`. If the
+record exists but belongs to a different org, the result is empty and the service throws a
+`ResourceNotFoundException`. The caller receives 404, not 403.
 
-### Request pipeline
+**Layer 3 — org_id never accepted from client**
+The org context is read exclusively from the JWT principal (`CurrentUserContext`). No endpoint
+accepts `orgId` as a request body field or query parameter.
 
-JWT Auth (JwtAuthFilter)
-|
-Tenant Scoping (TenantFilter → sets TenantContext)
-|
-Permission Check (@PreAuthorize → CustomPermissionEvaluator)
-|
-Business Logic (Service layer)
-|
-Rate Limit Check (Phase 5)
+A 403 confirms a resource exists but is inaccessible — leaking information to an attacker.
+A 404 reveals nothing. All cross-tenant access returns 404.
 
-### Data-driven RBAC
+---
 
-Roles and permissions are runtime data per organization, not hardcoded enums.
-An org admin creates roles, assigns permissions to them, and assigns roles to users —
-all through API calls. The permission check resolves at runtime:
+### Request Pipeline
 
-userId → UserRole → roleIds → RolePermission → permissionCode
+```
+HTTP Request
+    |
+JwtAuthFilter          — validates JWT, builds CurrentUserContext as Spring Security principal
+    |
+TenantFilter           — extracts orgId from JWT, sets TenantContext (ThreadLocal)
+    |
+TenantFilterConfig     — AOP @Before enables Hibernate tenant filter before every repository call
+    |
+@PreAuthorize          — CustomPermissionEvaluator checks userId -> roleIds -> permissionCode
+    |
+Service Layer          — business logic, orgId always from CurrentUserContext
+    |
+AuditAspect            — AOP @AfterReturning writes audit log after successful mutations
+```
 
-Enforced via a custom Spring Security PermissionEvaluator wired into @PreAuthorize.
+---
 
-### Rate limiting
+### Data-Driven RBAC
 
-Redis-backed quota keyed by org_id, pulled from Organization.requestLimitPerMinute
-on every request — not cached at startup, so quota changes take effect immediately
-without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining headers.
+Roles and permissions are runtime data, not hardcoded enums. An org admin creates roles,
+assigns permissions to them, and assigns roles to users through API calls. The permission
+check resolves at runtime:
+
+```
+userId -> UserRole -> roleIds -> RolePermission -> permissionCode
+```
+
+Enforced via a custom `PermissionEvaluator` wired into `@PreAuthorize("hasPermission(null, 'PERMISSION_CODE')")`.
+
+The 9 system-level permissions:
+
+| Code | Description |
+|---|---|
+| RESOURCE_CREATE | Create resources |
+| RESOURCE_READ | Read resources |
+| RESOURCE_UPDATE | Update resources |
+| RESOURCE_DELETE | Delete resources |
+| ROLE_CREATE | Create roles |
+| ROLE_READ | Read roles |
+| ROLE_ASSIGN | Assign roles and permissions |
+| USER_INVITE | Invite users |
+| AUDIT_VIEW | View audit logs |
+
+---
+
+### Invitation Flow
+
+```
+Admin calls POST /api/invitations
+    |
+System creates Invitation row — UUID token, 48hr expiry, status PENDING
+    |
+Token returned in API response (no email in this project)
+    |
+Invitee calls POST /api/auth/accept-invitation with token + chosen password
+    |
+@Transactional block:
+    — validate token (exists, PENDING, not expired)
+    — create User row
+    — create UserRole row
+    — mark Invitation ACCEPTED
+    |
+JWT returned immediately — invitee is logged in without a separate login call
+```
+
+---
+
+### Audit Logging
+
+All mutations are logged automatically via `AuditAspect` — an AOP `@AfterReturning` advice
+that fires after any controller method returns successfully. The aspect reads the actor's
+identity from the `SecurityContext`, maps the method name to an action string, and writes
+an `AuditLog` row. Service methods contain zero audit logging code.
+
+The one exception is `USER_JOINED` — logged manually inside `AuthService.acceptInvitation`
+because the accept-invitation endpoint is public and has no JWT principal in the SecurityContext.
+
+Actions logged automatically via AOP:
+
+| Action | Trigger |
+|---|---|
+| INVITE_SENT | sendInvitation() |
+| RESOURCE_CREATED | createResource() |
+| RESOURCE_UPDATED | updateResource() |
+| RESOURCE_DELETED | deleteResource() |
+| ROLE_CREATED | createRole() |
+| ROLE_ASSIGNED | assignRoleToUser() |
+
+Actions logged manually:
+
+| Action | Trigger |
+|---|---|
+| USER_JOINED | acceptInvitation() — no JWT principal available on public endpoints |
 
 ---
 
@@ -97,24 +182,26 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 | roles | Org-scoped custom roles |
 | permissions | Global permission catalog (system-level, not org-scoped) |
 | role_permissions | Maps permissions to roles |
-| user_roles | Maps roles to users, tracks assignedAt |
+| user_roles | Maps roles to users |
 | resources | Tenant-scoped business objects |
-| invitations | Token-based invite flow with 48hr expiry |
+| invitations | Token-based invite flow with 48hr expiry and single-use enforcement |
 | audit_logs | Immutable append-only change history |
 
 ---
 
 ## API Endpoints
 
-### Auth (public — no JWT required)
+### Auth — public, no JWT required
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | /api/auth/register-org | Register new organization and first admin user |
-| POST | /api/auth/login | Login with email, password, and orgSlug |
-| POST | /api/auth/accept-invitation | Accept invitation and create account |
+| POST | /api/auth/register-org | Register organization and bootstrap admin account |
+| POST | /api/auth/login | Login and receive JWT |
+| POST | /api/auth/accept-invitation | Accept invitation, create account, receive JWT |
 
-**Register org — request**
+**POST /api/auth/register-org**
+
+Request:
 ```json
 {
     "orgName": "Acme Corp",
@@ -123,7 +210,7 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 }
 ```
 
-**Register org — response (201)**
+Response `201`:
 ```json
 {
     "message": "Organisation registered successfully",
@@ -131,7 +218,9 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 }
 ```
 
-**Login — request**
+**POST /api/auth/login**
+
+Request:
 ```json
 {
     "email": "alice@acme.com",
@@ -140,7 +229,7 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 }
 ```
 
-**Login — response (200)**
+Response `200`:
 ```json
 {
     "token": "eyJhbGci...",
@@ -152,9 +241,24 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 }
 ```
 
-### Resources (JWT required)
+**POST /api/auth/accept-invitation**
 
-| Method | Endpoint | Permission required |
+Request:
+```json
+{
+    "token": "d48a7b74-86d7-4996-bbf8-f8e301ec4364",
+    "password": "password123"
+}
+```
+
+Response `200` — same shape as login response. Invitee receives a usable JWT immediately
+without needing to make a separate login call.
+
+---
+
+### Resources — JWT required
+
+| Method | Endpoint | Permission |
 |---|---|---|
 | POST | /api/resources | RESOURCE_CREATE |
 | GET | /api/resources | RESOURCE_READ |
@@ -163,9 +267,67 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 | DELETE | /api/resources/{id} | RESOURCE_DELETE |
 | GET | /api/resources/search?name= | RESOURCE_READ |
 
-### Roles (JWT required)
+**POST /api/resources**
 
-| Method | Endpoint | Permission required |
+Request:
+```json
+{
+    "name": "Primary Database",
+    "type": "DATABASE",
+    "description": "Main production database"
+}
+```
+
+Response `201`:
+```json
+{
+    "id": 1,
+    "orgId": 1,
+    "name": "Primary Database",
+    "ownerUserId": 1,
+    "createdAt": "2026-06-29T12:00:00"
+}
+```
+
+**PUT /api/resources/{id}**
+
+Request:
+```json
+{
+    "name": "Primary Database — Updated",
+    "type": "DATABASE",
+    "description": "Updated description"
+}
+```
+
+Response `200` — same shape as the create response with updated fields.
+
+**DELETE /api/resources/{id}**
+
+Response `204 No Content` — no body returned.
+
+**GET /api/resources/search?name=database**
+
+Response `200`:
+```json
+[
+    {
+        "id": 1,
+        "orgId": 1,
+        "name": "Primary Database",
+        "ownerUserId": 1,
+        "createdAt": "2026-06-29T12:00:00"
+    }
+]
+```
+
+Results are filtered by name within the caller's org only.
+
+---
+
+### Roles — JWT required
+
+| Method | Endpoint | Permission |
 |---|---|---|
 | POST | /api/roles | ROLE_CREATE |
 | GET | /api/roles | ROLE_READ |
@@ -173,26 +335,135 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 | POST | /api/roles/{roleId}/permissions/{permissionId} | ROLE_ASSIGN |
 | GET | /api/roles/{roleId}/permissions | ROLE_READ |
 
-### Invitations (JWT required)
+**POST /api/roles**
 
-| Method | Endpoint | Permission required |
+Request:
+```json
+{
+    "name": "ReadOnly"
+}
+```
+
+Response `201`:
+```json
+{
+    "id": 2,
+    "name": "ReadOnly",
+    "orgId": 1,
+    "createdAt": "2026-06-29T12:00:00"
+}
+```
+
+**POST /api/roles/{roleId}/assign/{userId}**
+
+No request body. Both `roleId` and `userId` are path variables.
+
+Response `200` — confirms role assigned to user.
+
+**POST /api/roles/{roleId}/permissions/{permissionId}**
+
+No request body. Both `roleId` and `permissionId` are path variables.
+
+Response `204 No Content` — no body returned.
+
+**GET /api/roles/{roleId}/permissions**
+
+Response `200`:
+```json
+[
+    {
+        "id": 2,
+        "code": "RESOURCE_READ",
+        "description": "Can read resources"
+    }
+]
+```
+
+---
+
+### Invitations — JWT required
+
+| Method | Endpoint | Permission |
 |---|---|---|
 | POST | /api/invitations | USER_INVITE |
 
-### Audit Logs (JWT required)
+Request:
+```json
+{
+    "email": "bob@acme.com",
+    "roleId": 2
+}
+```
 
-| Method | Endpoint | Permission required |
+Response `201`:
+```json
+{
+    "token": "9f0ab181-eed3-47e1-8a04-750b2a6ac0a7",
+    "email": "bob@acme.com",
+    "expiresAt": "2026-07-01T13:28:55.317"
+}
+```
+
+---
+
+### Audit Logs — JWT required
+
+| Method | Endpoint | Permission |
 |---|---|---|
 | GET | /api/audit-logs | AUDIT_VIEW |
 
-### Error response
+Response `200`:
+```json
+[
+    {
+        "id": 6,
+        "orgId": 1,
+        "actorUserId": 2,
+        "action": "USER_JOINED",
+        "entityType": "USER",
+        "entityId": 2,
+        "oldValue": null,
+        "newValue": null,
+        "timestamp": "2026-06-29T12:51:47.842596"
+    },
+    {
+        "id": 5,
+        "orgId": 1,
+        "actorUserId": 1,
+        "action": "INVITE_SENT",
+        "entityType": "INVITATION",
+        "entityId": 0,
+        "oldValue": null,
+        "newValue": null,
+        "timestamp": "2026-06-29T12:50:55.089218"
+    }
+]
+```
+
+Results are ordered by timestamp descending and scoped to the caller's org.
+
+---
+
+### Error Response Shape
+
+All errors return a consistent structure:
+
 ```json
 {
     "status": 400,
-    "message": "Invalid credentials",
-    "timestamp": "2026-06-28T15:18:52"
+    "message": "Pending invitation already exists for this email",
+    "timestamp": "2026-06-29T12:34:28.73396"
 }
 ```
+
+| Status | Scenario |
+|---|---|
+| 400 | Validation failure, invalid credentials, business rule violation |
+| 401 | No JWT provided on a protected endpoint |
+| 403 | Valid JWT but missing required permission |
+| 404 | Resource not found or cross-tenant access attempt |
+| 409 | Duplicate assignment — role or permission already assigned |
+| 429 | Rate limit exceeded (Phase 5) |
 
 ---
 
@@ -200,98 +471,147 @@ without a restart. Returns 429 with Retry-After and X-RateLimit-Remaining header
 
 ### Phase 1 — Auth
 
-| Test | Expected | Status |
+| Test | Expected | Result |
 |---|---|---|
-| Register org | 201 + message + orgSlug | Passed |
-| Login | 200 + JWT | Passed |
-| Wrong password | 400 "Invalid credentials" | Passed |
-| Wrong org slug | 400 "Invalid credentials" | Passed |
-| Empty password | 400 validation error | Passed |
-| Duplicate org registration | 400 "Organization name already exists" | Passed |
+| Register org | 201 with message and orgSlug | Passed |
+| Login with correct credentials | 200 with JWT | Passed |
+| Login with wrong password | 400 Invalid credentials | Passed |
+| Login with wrong org slug | 400 Invalid credentials | Passed |
+| Login with empty password | 400 validation error | Passed |
+| Register duplicate org name | 400 Organization name already exists | Passed |
+
+---
 
 ### Phase 2 — Tenant Isolation
 
-| Test | Expected | Status |
+| Test | Expected | Result |
 |---|---|---|
-| Create resource | 201, orgId from JWT not request body | Passed |
-| Get all resources | 200, only own tenant's resources returned | Passed |
-| Get resource by ID | 200 | Passed |
-| Update resource | 200 | Passed |
-| Search by name | 200, filtered within tenant | Passed |
-| Cross-tenant access | 404 not 403 | Passed |
+| Create resource | 201, orgId set from JWT not request body | Passed |
+| Get all resources | 200, only caller's org resources returned | Passed |
+| Get resource by ID — exists | 200 with resource | Passed |
+| Get resource by ID — does not exist | 404 | Passed |
+| Update resource | 200 with updated fields | Passed |
+| Delete resource | 204 No Content | Passed |
+| Search resources by name | 200, results filtered within org | Passed |
+| Access another org's resource by ID | 404 not 403 | Passed |
+
+---
 
 ### Phase 3 — RBAC
 
-| Test | Expected | Status |
+| Test | Expected | Result |
 |---|---|---|
-| Create role | 201 | Passed |
-| Get all roles | 200, only org's roles | Passed |
-| Assign permission to role | 204 | Passed |
-| Duplicate permission assignment | 409 Conflict | Passed |
-| Get role permissions | 200 | Passed |
-| VIEWER access to read endpoint | 200 | Pending Phase 4 |
-| VIEWER access to write endpoint | 403 | Pending Phase 4 |
+| Create role | 201 with role details | Passed |
+| Get all roles | 200, only caller's org roles returned | Passed |
+| Assign permission to role | 204 No Content | Passed |
+| Assign duplicate permission to role | 409 Conflict | Passed |
+| Get role permissions | 200 with permission list | Passed |
+| Assign role to user | 200 | Passed |
+| Access protected endpoint without JWT | 401 | Passed |
+| Access protected endpoint with valid JWT but missing permission | 403 | Passed |
+| ReadOnly user — GET /api/resources | 200 | Passed |
+| ReadOnly user — POST /api/resources | 403 | Passed |
+
+---
+
+### Phase 4 — Invitations + Audit Log
+
+| Test | Expected | Result |
+|---|---|---|
+| Send invitation to new email | 201 with token and expiresAt | Passed |
+| Send invitation to email with pending invite | 400 Pending invitation already exists | Passed |
+| Send invitation to existing user's email | 400 User already exists in this organization | Passed |
+| Accept valid invitation | 200 with JWT | Passed |
+| Accept already-used invitation token | 400 Invitation has already been used | Passed |
+| Accept expired invitation token | 400 Invitation has expired | Passed |
+| Accept non-existent token | 400 Invalid invitation token | Passed |
+| Invited user logs in after account creation | 200 with JWT | Passed |
+| Get audit logs as admin | 200 with INVITE_SENT and USER_JOINED entries | Passed |
+| Audit logs scoped to org — no cross-org entries visible | 200, isolated results | Passed |
+| Get audit logs without AUDIT_VIEW permission | 403 | Passed |
 
 ---
 
 ## Design Decisions
 
 ### Why shared schema over schema-per-tenant?
-Shared schema scales better operationally — one database, one schema, one deployment.
-Schema-per-tenant multiplies maintenance overhead with every new organization added.
-Row-level isolation via Hibernate filters gives the same security guarantees at a fraction
-of the operational complexity.
+
+Shared schema scales better operationally. Schema-per-tenant multiplies migration overhead,
+connection pool requirements, and monitoring complexity with every new organization. Row-level
+isolation via a Hibernate filter gives the same security guarantees with a fraction of the
+operational cost.
 
 ### Why 404 instead of 403 for cross-tenant access?
-A 403 confirms the resource exists but the caller cannot access it — leaking information
-to an attacker. A 404 reveals nothing. Standard practice for multi-tenant systems where
-resource existence itself is sensitive information.
+
+A 403 confirms the resource exists but the caller cannot access it — leaking information to an
+attacker who can use that signal to enumerate IDs across tenants. A 404 reveals nothing. This is
+standard practice in multi-tenant systems where resource existence itself is sensitive.
 
 ### Why Hibernate filter over manual per-method scoping?
+
 Manual scoping means every developer must remember to add a tenant check to every new query.
 One missed call leaks data across tenants. A Hibernate filter applies automatically at the
-session level before any query executes — a single enforcement point that cannot be forgotten.
+session level before any query executes — a single enforcement point that cannot be bypassed
+by forgetting to add a WHERE clause.
 
 ### Why data-driven RBAC over hardcoded roles?
-Hardcoded roles (ADMIN, USER, VIEWER as enums) require a code change and redeployment to add
-a new role. Data-driven RBAC lets org admins define their own roles and permissions through
-the API at runtime. This is how real SaaS platforms like Stripe and Notion handle access control.
 
-### Why no open user registration?
-There is no public registration endpoint for regular users. The only way to join an organization
-is through an admin-initiated invitation. This prevents unauthorized users from joining a tenant
-and keeps the org boundary strict.
+Hardcoded roles (ADMIN, USER, VIEWER as enums) require a code change and redeployment to modify
+access control. Data-driven RBAC lets org admins define roles and assign permissions through the
+API at runtime. This is how access control works in real SaaS platforms — the application
+enforces the rules, the customer defines them.
+
+### Why invitation-only user onboarding?
+
+There is no open registration endpoint for regular users. The only way to join an organization
+is through an admin-initiated invitation. This keeps the org boundary strict and prevents
+unauthorized accounts from being created inside a tenant.
+
+### Why AOP for audit logging instead of manual calls?
+
+Manual audit logging inside every service method mixes business logic with cross-cutting concerns.
+If a developer adds a new endpoint and forgets to add the audit call, the gap is invisible until
+something goes wrong. An AOP @AfterReturning advice intercepts every controller return
+automatically — the aspect fires or it does not, with no dependency on developer discipline.
+
+### Why does accept-invitation return a JWT immediately?
+
+The invitation token already proves the caller was legitimately invited. There is no reason to
+make the invitee authenticate again on a separate login call immediately after account creation.
+The @Transactional block creates the account and returns a usable JWT in a single response.
 
 ### Why Redis over in-memory counter for rate limiting?
-*To be filled in after Phase 5*
+
+*To be filled in after Phase 5.*
 
 ### Token Bucket vs Sliding Window — which is default and why?
-*To be filled in after Phase 5*
+
+*To be filled in after Phase 5.*
 
 ---
 
 ## Build Progress
 
-| Phase | Status |
-|---|---|
-| Phase 0 — Setup | Complete |
-| Phase 1 — Auth + Entities | Complete |
-| Phase 2 — Tenant Isolation | Complete |
-| Phase 3 — RBAC | Complete |
-| Phase 4 — Invitations + Audit Log | In progress |
-| Phase 5 — Rate Limiting | Pending |
-| Phase 6 — React Frontend | Pending |
-| Phase 7 — Tests | Pending |
-| Phase 8 — Docker + Deploy | Pending |
+| Phase | Description | Status |
+|---|---|---|
+| 0 | Setup — project, Docker, data.sql, README | Complete |
+| 1 | Auth — entities, repositories, JWT, register, login | Complete |
+| 2 | Tenant Isolation — Hibernate filter, TenantContext, resource CRUD | Complete |
+| 3 | RBAC — custom PermissionEvaluator, roles, permission assignment | Complete |
+| 4 | Invitations + Audit Log — invite flow, AuditAspect, audit log endpoint | Complete |
+| 5 | Rate Limiting — Redis, Token Bucket, Sliding Window, 429 responses | Pending |
+| 6 | React Frontend — login, resources, roles, invitations, audit log | Pending |
+| 7 | Tests — tenant isolation, RBAC, rate limiting | Pending |
+| 8 | Docker + Deploy — multi-stage Dockerfile, Render/Railway | Pending |
 
 ---
 
-## Setup & Running Locally
+## Setup and Running Locally
 
-*To be filled in after Phase 8*
+*To be filled in after Phase 8.*
 
 ---
 
 ## Live Demo
 
-*To be filled in after Phase 8*
+*To be filled in after Phase 8.*
