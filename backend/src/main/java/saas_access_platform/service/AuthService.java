@@ -13,17 +13,12 @@ import saas_access_platform.entity.Permission;
 import saas_access_platform.entity.Role;
 import saas_access_platform.entity.User;
 import saas_access_platform.entity.UserRole;
-import saas_access_platform.repository.OrganizationRepository;
-import saas_access_platform.repository.PermissionRepository;
-import saas_access_platform.repository.RolePermissionRepository;
-import saas_access_platform.repository.RoleRepository;
-import saas_access_platform.repository.UserRepository;
-import saas_access_platform.repository.UserRoleRepository;
+import saas_access_platform.repository.*;
 import saas_access_platform.security.JwtUtil;
 import saas_access_platform.dto.request.AcceptInvitationRequest;
 import saas_access_platform.entity.Invitation;
 import saas_access_platform.exception.InvalidInvitationException;
-import saas_access_platform.repository.InvitationRepository;
+import saas_access_platform.entity.AuditLog;
 
 import java.time.LocalDateTime;
 import java.util.stream.Collectors;
@@ -43,6 +38,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final InvitationRepository invitationRepository;
+    private final AuditLogRepository auditLogRepository;
 
     @Transactional
     public RegisterOrgResponse registerOrg(RegisterOrgRequest request) {
@@ -173,6 +169,16 @@ public class AuthService {
 
         invitation.setStatus(Invitation.InvitationStatus.ACCEPTED);
         invitationRepository.save(invitation);
+
+        AuditLog auditLog = AuditLog.builder()
+                .orgId(savedUser.getOrgId())
+                .actorUserId(savedUser.getId())
+                .action("USER_JOINED")
+                .entityType("USER")
+                .entityId(savedUser.getId())
+                .build();
+
+        auditLogRepository.save(auditLog);
 
         Organization org = organizationRepository.findById(invitation.getOrgId())
                 .orElseThrow(() -> new RuntimeException("Organization not found"));
