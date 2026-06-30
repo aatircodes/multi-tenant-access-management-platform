@@ -49,6 +49,12 @@ public class UsageService {
             tokensRemaining = Math.min(limit, storedTokens + (elapsed * refillRatePerSecond));
         }
 
+        if (tokensRemaining < 0.01) {
+            tokensRemaining = 0.0;
+        }
+
+        tokensRemaining = Math.round(tokensRemaining * 100.0) / 100.0;
+
         return UsageResponse.builder()
                 .orgId(orgId)
                 .limitPerMinute(limit)
