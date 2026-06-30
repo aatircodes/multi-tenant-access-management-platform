@@ -41,8 +41,8 @@ public class SecurityConfig {
                 )
                 .addFilterBefore(jwtAuthFilter,
                         UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(tenantFilter, JwtAuthFilter.class)
-                .addFilterAfter(rateLimitFilter, TenantFilter.class);
+                .addFilterAfter(rateLimitFilter, JwtAuthFilter.class)
+                .addFilterAfter(tenantFilter, RateLimitFilter.class);
         return http.build();
     }
 
