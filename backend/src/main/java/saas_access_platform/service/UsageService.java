@@ -29,9 +29,25 @@ public class UsageService {
         int limit = organization.getRequestLimitPerMinute();
 
         String tokensKey = "ratelimit:" + orgId + ":tokens";
-        String tokensStr = redisTemplate.opsForValue().get(tokensKey);
+        String refillKey = "ratelimit:" + orgId + ":refill_at";
 
-        double tokensRemaining = (tokensStr != null) ? Double.parseDouble(tokensStr) : limit;
+        String tokensStr = redisTemplate.opsForValue().get(tokensKey);
+        String refillAtStr = redisTemplate.opsForValue().get(refillKey);
+
+        double tokensRemaining;
+
+        if (tokensStr == null || refillAtStr == null) {
+            tokensRemaining = limit;
+        } else {
+            double storedTokens = Double.parseDouble(tokensStr);
+            long lastRefillAt = Long.parseLong(refillAtStr);
+            long now = System.currentTimeMillis() / 1000;
+
+            long elapsed = now - lastRefillAt;
+            double refillRatePerSecond = limit / 60.0;
+
+            tokensRemaining = Math.min(limit, storedTokens + (elapsed * refillRatePerSecond));
+        }
 
         return UsageResponse.builder()
                 .orgId(orgId)
