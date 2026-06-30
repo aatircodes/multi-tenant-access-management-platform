@@ -3,7 +3,9 @@
 A production-grade backend platform where multiple organizations share the same application
 and database, with complete data isolation enforced through three independent layers —
 a Hibernate session-level filter, a service-layer ownership assertion, and JWT-derived
-tenant context that is never accepted from the client.
+tenant context that is never accepted from the client. The platform also enforces
+per-organization API rate limits using a Redis-backed token bucket, protecting the system
+from abuse while allowing legitimate short bursts of traffic.
 
 Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 
@@ -32,7 +34,7 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 | Framework | Spring Boot 3.4.5 |
 | Security | Spring Security, JWT (HS384), BCrypt |
 | Persistence | Spring Data JPA, Hibernate, MySQL |
-| Rate Limiting | Redis (Token Bucket + Sliding Window) |
+| Rate Limiting | Redis, atomic Lua script, Token Bucket algorithm |
 | Frontend | React (Vite), Axios |
 | Infrastructure | Docker, Docker Compose |
 | Testing | JUnit 5, Spring Boot Test |
@@ -46,8 +48,8 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 - Data-driven RBAC — organizations define custom roles and assign permissions at runtime without any code change
 - Invitation-based user onboarding with single-use UUID tokens and 48-hour expiry
 - Immutable audit logging for all mutations via AOP — no manual logging in service code
-- Tenant-aware rate limiting with runtime-configurable quotas per organization
-- Two rate limiting algorithms: Token Bucket and Sliding Window
+- Per-organization rate limiting using a Redis-backed token bucket, enforced atomically through a Lua script
+- Self-service usage endpoint so any authenticated user can check their organization's remaining quota without consuming it
 
 ---
 
@@ -81,16 +83,23 @@ HTTP Request
     |
 JwtAuthFilter          — validates JWT, builds CurrentUserContext as Spring Security principal
     |
-TenantFilter           — extracts orgId from JWT, sets TenantContext (ThreadLocal)
+RateLimitFilter         — checks org's token bucket in Redis, rejects with 429 if exhausted
     |
-TenantFilterConfig     — AOP @Before enables Hibernate tenant filter before every repository call
+TenantFilter            — extracts orgId from JWT, sets TenantContext (ThreadLocal)
     |
-@PreAuthorize          — CustomPermissionEvaluator checks userId -> roleIds -> permissionCode
+TenantFilterConfig      — AOP @Before enables Hibernate tenant filter before every repository call
     |
-Service Layer          — business logic, orgId always from CurrentUserContext
+@PreAuthorize            — CustomPermissionEvaluator checks userId -> roleIds -> permissionCode
     |
-AuditAspect            — AOP @AfterReturning writes audit log after successful mutations
+Service Layer            — business logic, orgId always from CurrentUserContext
+    |
+AuditAspect               — AOP @AfterReturning writes audit log after successful mutations
 ```
+
+`RateLimitFilter` runs immediately after authentication and before tenant context setup or any
+business logic. This is a deliberate fail-fast ordering — a request that will be rejected for
+exceeding its quota should be rejected as early as possible, before the system does any further
+work on it.
 
 ---
 
@@ -173,6 +182,67 @@ Actions logged manually:
 
 ---
 
+### Rate Limiting — Token Bucket
+
+Each organization is allocated a request quota defined by `requestLimitPerMinute` on the
+`Organization` entity, defaulting to 100 requests per minute. This quota is enforced using a
+token bucket algorithm backed by Redis.
+
+**How the bucket works**
+
+Every organization has a bucket holding up to `requestLimitPerMinute` tokens. Tokens refill
+continuously at a constant rate of `limit / 60` tokens per second, rather than resetting all
+at once at a fixed interval. Each incoming request consumes one token. If no tokens remain,
+the request is rejected with `429 Too Many Requests`.
+
+This continuous refill model was chosen over a fixed-window counter because it avoids the
+boundary spike problem inherent to fixed windows, where a burst of traffic at the edge of one
+window and the start of the next can momentarily double the effective rate. It also naturally
+tolerates short bursts of legitimate traffic — such as a client syncing several records at
+once — without requiring a separate burst allowance.
+
+**Atomicity**
+
+The read, refill calculation, limit check, and token decrement are all performed inside a
+single Lua script executed atomically on Redis. This eliminates the race condition that would
+otherwise occur if two concurrent requests for the same organization both read the token count
+before either one writes back the decremented value — a classic check-then-act bug under
+concurrent load.
+
+**Redis key structure**
+
+```
+ratelimit:{orgId}:tokens      — current token count (decimal, refilled lazily on read)
+ratelimit:{orgId}:refill_at   — Unix timestamp of the last token calculation
+```
+
+**Response on rejection**
+
+```json
+{
+    "status": 429,
+    "message": "Rate limit exceeded"
+}
+```
+
+Headers:
+
+```
+Retry-After: 60
+X-RateLimit-Remaining: 0
+```
+
+**Usage endpoint**
+
+`GET /api/usage` lets any authenticated user check their organization's current quota status
+without consuming a token. This endpoint is explicitly excluded from `RateLimitFilter` — a
+client checking how much quota remains should never be penalized for checking. The endpoint
+independently recalculates the live refilled token count from the stored values rather than
+returning a stale snapshot, so it always reflects the true state of the bucket at the moment
+of the call.
+
+---
+
 ## Database Schema
 
 | Table | Purpose |
@@ -186,6 +256,10 @@ Actions logged manually:
 | resources | Tenant-scoped business objects |
 | invitations | Token-based invite flow with 48hr expiry and single-use enforcement |
 | audit_logs | Immutable append-only change history |
+
+Rate limiting state is not persisted in MySQL. Token counts and refill timestamps live
+entirely in Redis, since this data is ephemeral by nature and does not require durability —
+if Redis is restarted, every organization simply starts with a full bucket again.
 
 ---
 
@@ -444,6 +518,32 @@ Results are ordered by timestamp descending and scoped to the caller's org.
 
 ---
 
+### Usage — JWT required, no permission needed
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | /api/usage | Returns the caller's org current rate limit status |
+
+Any authenticated user in an organization can check their org's usage — there is no
+restriction by permission, since visibility into remaining quota is not an administrative
+concern. This endpoint is excluded from rate limiting itself, so checking usage never
+consumes a token.
+
+Response `200`:
+```json
+{
+    "orgId": 1,
+    "limitPerMinute": 100,
+    "tokensRemaining": 88.33
+}
+```
+
+`tokensRemaining` is calculated live at the time of the request, reflecting any refill that
+has happened since the organization's last rate-limited request, rounded to two decimal
+places. A value of `100.0` means the bucket is completely full.
+
+---
+
 ### Error Response Shape
 
 All errors return a consistent structure:
@@ -456,6 +556,10 @@ All errors return a consistent structure:
 }
 ```
 
+The one exception is the 429 response, which uses a slightly different shape (`status` and
+`message` only, no `timestamp`) since it is written directly by `RateLimitFilter` rather than
+passing through `GlobalExceptionHandler`.
+
 | Status | Scenario |
 |---|---|
 | 400 | Validation failure, invalid credentials, business rule violation |
@@ -463,7 +567,7 @@ All errors return a consistent structure:
 | 403 | Valid JWT but missing required permission |
 | 404 | Resource not found or cross-tenant access attempt |
 | 409 | Duplicate assignment — role or permission already assigned |
-| 429 | Rate limit exceeded (Phase 5) |
+| 429 | Organization has exceeded its rate limit |
 
 ---
 
@@ -532,6 +636,22 @@ All errors return a consistent structure:
 
 ---
 
+### Phase 5 — Rate Limiting
+
+| Test | Expected | Result |
+|---|---|---|
+| Check usage with empty bucket (new org) | 200, tokensRemaining equals limitPerMinute | Passed |
+| Repeated requests within quota | 200 for each request | Passed |
+| Sustained burst exceeding quota | 429 once tokens are exhausted | Passed |
+| 429 response includes correct headers | Retry-After: 60, X-RateLimit-Remaining: 0 | Passed |
+| Token refill under sustained load | Intermittent 200 responses appear between 429s as tokens regenerate | Passed |
+| Usage check immediately after exhaustion | tokensRemaining close to 0 | Passed |
+| Usage check after waiting | tokensRemaining increases proportionally to elapsed time | Passed |
+| Repeated usage checks with no delay | tokensRemaining unchanged — usage endpoint does not consume tokens | Passed |
+| Bucket fully refilled after one minute idle | tokensRemaining returns to limitPerMinute | Passed |
+
+---
+
 ## Design Decisions
 
 ### Why shared schema over schema-per-tenant?
@@ -580,13 +700,43 @@ The invitation token already proves the caller was legitimately invited. There i
 make the invitee authenticate again on a separate login call immediately after account creation.
 The @Transactional block creates the account and returns a usable JWT in a single response.
 
-### Why Redis over in-memory counter for rate limiting?
+### Why Redis over an in-memory counter for rate limiting?
 
-*To be filled in after Phase 5.*
+An in-memory counter on a single application instance does not scale beyond one server. The
+moment the application runs as multiple replicas behind a load balancer, each instance would
+track its own separate counter, allowing an organization to receive several times its intended
+limit simply by having requests routed to different instances. Redis provides a single shared
+source of truth for the counter regardless of how many application instances are running,
+which is the same approach used by rate limiters in production SaaS platforms.
 
-### Token Bucket vs Sliding Window — which is default and why?
+### Why token bucket over a fixed-window counter?
 
-*To be filled in after Phase 5.*
+A fixed-window counter resets entirely at a clock boundary, which creates a boundary spike
+problem — a client can send a full quota of requests in the final second of one window and a
+full quota again in the first second of the next, doubling the effective rate for a brief
+period. Token bucket avoids this because tokens refill continuously rather than all at once,
+so there is no single instant where the available quota suddenly jumps. It also naturally
+allows short, legitimate bursts of traffic, which is the access pattern of an authenticated
+API client integrating with this platform, rather than the pattern of a public-facing
+endpoint that needs to defend against abuse with zero tolerance.
+
+### Why is rate limit configuration not exposed as a self-service setting?
+
+`requestLimitPerMinute` is a field on the `Organization` entity and could technically be
+exposed through an update endpoint. It deliberately is not. If an organization could set its
+own limit without constraint, the rate limiter would no longer serve its purpose — there is
+nothing stopping every organization from simply raising its own limit to an arbitrarily high
+number. In production systems this value is tied to a billing plan and changed through an
+internal administrative process, not a user-facing API. For this project, every organization
+receives the same default of 100 requests per minute on creation.
+
+### Why does the usage endpoint exclude itself from rate limiting?
+
+Checking remaining quota should not cost quota. If `GET /api/usage` consumed a token like any
+other request, a client trying to behave well by checking its limit before sending a burst
+would itself contribute to exhausting that limit, which defeats the purpose of exposing the
+endpoint in the first place. Production APIs such as GitHub's rate limit status endpoint
+follow the same pattern — monitoring endpoints are excluded from the limit they report on.
 
 ---
 
@@ -599,7 +749,7 @@ The @Transactional block creates the account and returns a usable JWT in a singl
 | 2 | Tenant Isolation — Hibernate filter, TenantContext, resource CRUD | Complete |
 | 3 | RBAC — custom PermissionEvaluator, roles, permission assignment | Complete |
 | 4 | Invitations + Audit Log — invite flow, AuditAspect, audit log endpoint | Complete |
-| 5 | Rate Limiting — Redis, Token Bucket, Sliding Window, 429 responses | Pending |
+| 5 | Rate Limiting — Redis, token bucket, atomic Lua script, usage endpoint | Complete |
 | 6 | React Frontend — login, resources, roles, invitations, audit log | Pending |
 | 7 | Tests — tenant isolation, RBAC, rate limiting | Pending |
 | 8 | Docker + Deploy — multi-stage Dockerfile, Render/Railway | Pending |
