@@ -23,9 +23,9 @@ public class RedisConfig {
     }
 
     @Bean
-    public DefaultRedisScript<List> slidingWindowScript() {
+    public DefaultRedisScript<List> tokenBucketScript() {
         DefaultRedisScript<List> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("scripts/sliding_window.lua"));
+        script.setLocation(new ClassPathResource("scripts/token_bucket.lua"));
         script.setResultType(List.class);
         return script;
     }
