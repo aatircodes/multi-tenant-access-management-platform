@@ -15,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import saas_access_platform.security.JwtAuthFilter;
+import saas_access_platform.security.RateLimitFilter;
 import saas_access_platform.security.TenantFilter;
 
 @Configuration
@@ -25,6 +26,7 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final TenantFilter tenantFilter;
+    private final RateLimitFilter rateLimitFilter;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http)
@@ -39,7 +41,8 @@ public class SecurityConfig {
                 )
                 .addFilterBefore(jwtAuthFilter,
                         UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(tenantFilter, JwtAuthFilter.class);
+                .addFilterAfter(tenantFilter, JwtAuthFilter.class)
+                .addFilterAfter(rateLimitFilter, TenantFilter.class);
         return http.build();
     }
 
