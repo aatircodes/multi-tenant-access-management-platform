@@ -129,4 +129,22 @@ public class RoleService {
                         .build())
                 .toList();
     }
+
+    public void removePermissionFromRole(Long roleId, Long permissionId) {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        Permission permission = permissionRepository.findById(permissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Permission not found"));
+
+        // Prevent removing a permission that was never assigned
+        if (!rolePermissionRepository.existsByRoleIdAndPermissionId(role.getId(), permission.getId())) {
+            throw new ResourceNotFoundException("Permission not assigned to this role");
+        }
+
+        rolePermissionRepository.deleteByRoleIdAndPermissionId(role.getId(), permission.getId());
+    }
 }
