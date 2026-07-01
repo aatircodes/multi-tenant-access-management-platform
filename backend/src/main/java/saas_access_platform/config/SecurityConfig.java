@@ -40,7 +40,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         .anyRequest().authenticated()
                 )
-                .addFilterBefore(jwtAuthFilter,
+                .addFilterBefore(jwtAuthFilter,  // Confirm filter flow
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(rateLimitFilter, JwtAuthFilter.class)
                 .addFilterAfter(tenantFilter, RateLimitFilter.class);
