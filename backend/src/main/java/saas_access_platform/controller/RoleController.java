@@ -63,4 +63,11 @@ public class RoleController {
         roleService.removePermissionFromRole(roleId, permissionId);
         return ResponseEntity.noContent().build();
     }
+
+    @PostMapping("/transfer-admin/{newUserId}")
+    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    public ResponseEntity<Void> transferAdmin(@PathVariable Long newUserId) {
+        roleService.transferAdmin(newUserId);
+        return ResponseEntity.noContent().build();
+    }
 }
