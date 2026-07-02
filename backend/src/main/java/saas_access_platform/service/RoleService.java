@@ -1,5 +1,6 @@
 package saas_access_platform.service;
 
+import org.springframework.transaction.annotation.Transactional;
 import saas_access_platform.dto.request.CreateRoleRequest;
 import saas_access_platform.dto.response.PermissionResponse;
 import saas_access_platform.dto.response.RoleResponse;
@@ -66,6 +67,10 @@ public class RoleService {
         Role role = roleRepository.findByIdAndOrgId(roleId, orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
 
+        if (role.getName().equalsIgnoreCase("Admin")) {
+            throw new RuntimeException("Admin role cannot be assigned directly — use transfer-admin instead");
+        }
+
         User user = userRepository.findByIdAndOrgId(userId, orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -88,6 +93,10 @@ public class RoleService {
         // Verify role belongs to this org
         Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        if (role.getName().equalsIgnoreCase("Admin")) {
+            throw new RuntimeException("Admin role permissions cannot be modified");
+        }
 
         // Verify permission exists
         Permission permission = permissionRepository.findById(permissionId)
@@ -137,6 +146,10 @@ public class RoleService {
         Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
 
+        if (role.getName().equalsIgnoreCase("Admin")) {
+            throw new RuntimeException("Admin role permissions cannot be modified");
+        }
+
         Permission permission = permissionRepository.findById(permissionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Permission not found"));
 
@@ -146,5 +159,40 @@ public class RoleService {
         }
 
         rolePermissionRepository.deleteByRoleIdAndPermissionId(role.getId(), permission.getId());
+    }
+
+    @Transactional
+    public void transferAdmin(Long newUserId) {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Long orgId = currentUser.getOrgId();
+
+        Role adminRole = roleRepository.findByNameAndOrgId("Admin", orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Admin role not found"));
+
+        boolean callerIsAdmin = userRoleRepository
+                .existsByUserIdAndRoleId(currentUser.getUserId(), adminRole.getId());
+        if (!callerIsAdmin) {
+            throw new RuntimeException("Only the current Admin can transfer admin rights");
+        }
+
+        if (newUserId.equals(currentUser.getUserId())) {
+            throw new RuntimeException("User is already the Admin");
+        }
+
+        User newAdmin = userRepository.findByIdAndOrgId(newUserId, orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        // Demote current Admin
+        userRoleRepository.deleteByUserIdAndRoleId(currentUser.getUserId(), adminRole.getId());
+
+        // Promote new Admin
+        if (!userRoleRepository.existsByUserIdAndRoleId(newAdmin.getId(), adminRole.getId())) {
+            UserRole newAdminUserRole = UserRole.builder()
+                    .userId(newAdmin.getId())
+                    .roleId(adminRole.getId())
+                    .build();
+            userRoleRepository.save(newAdminUserRole);
+        }
     }
 }
