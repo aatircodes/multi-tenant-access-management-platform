@@ -37,6 +37,9 @@ public class Resource {
     @Column(nullable = false)
     private String name;
 
+    @Column(length = 500)
+    private String description;
+
     @Column(name = "owner_user_id", nullable = false)
     private Long ownerUserId;
 
