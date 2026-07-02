@@ -61,6 +61,7 @@ public class AuditAspect {
             case "deleteResource":     return "RESOURCE_DELETED";
             case "createRole":         return "ROLE_CREATED";
             case "assignRoleToUser":   return "ROLE_ASSIGNED";
+            case "transferAdmin":      return "ADMIN_TRANSFERRED";
             default:                   return null;
         }
     }
