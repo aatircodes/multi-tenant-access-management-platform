@@ -54,15 +54,17 @@ public class AuditAspect {
 
     private String resolveAction(String methodName) {
         switch (methodName) {
-            case "sendInvitation":     return "INVITE_SENT";
-            case "acceptInvitation":   return "USER_JOINED";
-            case "createResource":     return "RESOURCE_CREATED";
-            case "updateResource":     return "RESOURCE_UPDATED";
-            case "deleteResource":     return "RESOURCE_DELETED";
-            case "createRole":         return "ROLE_CREATED";
-            case "assignRoleToUser":   return "ROLE_ASSIGNED";
-            case "transferAdmin":      return "ADMIN_TRANSFERRED";
-            default:                   return null;
+            case "sendInvitation":           return "INVITE_SENT";
+            case "acceptInvitation":         return "USER_JOINED";
+            case "createResource":           return "RESOURCE_CREATED";
+            case "updateResource":           return "RESOURCE_UPDATED";
+            case "deleteResource":           return "RESOURCE_DELETED";
+            case "createRole":               return "ROLE_CREATED";
+            case "assignRoleToUser":         return "ROLE_ASSIGNED";
+            case "assignPermissionToRole":   return "PERMISSION_ASSIGNED";
+            case "removePermissionFromRole": return "PERMISSION_REMOVED";
+            case "transferAdmin":            return "ADMIN_TRANSFERRED";
+            default:                         return null;
         }
     }
 
