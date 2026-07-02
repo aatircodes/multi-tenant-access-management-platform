@@ -34,6 +34,7 @@ public class ResourceService {
 
         Resource resource = Resource.builder()
                 .name(request.getName())
+                .description(request.getDescription())
                 .orgId(currentUser.getOrgId())
                 .ownerUserId(currentUser.getUserId())
                 .build();
@@ -63,6 +64,7 @@ public class ResourceService {
     public Resource updateResource(Long id, UpdateResourceRequest request) {
         Resource resource = getResourceById(id);
         resource.setName(request.getName());
+        resource.setDescription(request.getDescription());
         return resourceRepository.save(resource);
     }
 
