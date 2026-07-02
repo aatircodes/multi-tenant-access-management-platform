@@ -1,6 +1,10 @@
 package saas_access_platform.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import saas_access_platform.dto.request.CreateResourceRequest;
@@ -37,9 +41,15 @@ public class ResourceService {
         return resourceRepository.save(resource);
     }
 
-    public List<Resource> getAllResources() {
+    public List<Resource> getAllResources() {   // can be removed later
         CurrentUserContext currentUser = getCurrentUser();
         return resourceRepository.findAllByOrgId(currentUser.getOrgId());
+    }
+
+    public Page<Resource> getAllResources(int page, int size) {
+        CurrentUserContext currentUser = getCurrentUser();
+        Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        return resourceRepository.findAllByOrgId(currentUser.getOrgId(), pageable);
     }
 
     public Resource getResourceById(Long id) {
