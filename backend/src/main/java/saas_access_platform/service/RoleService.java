@@ -55,6 +55,7 @@ public class RoleService {
                         .name(role.getName())
                         .orgId(role.getOrgId())
                         .createdAt(role.getCreatedAt())
+                        .memberCount(userRoleRepository.countByRoleId(role.getId()))
                         .build())
                 .toList();
     }

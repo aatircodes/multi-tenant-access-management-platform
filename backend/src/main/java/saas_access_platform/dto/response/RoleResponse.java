@@ -11,4 +11,5 @@ public class RoleResponse {
     private String name;
     private Long orgId;
     private LocalDateTime createdAt;
+    private long memberCount;
 }
