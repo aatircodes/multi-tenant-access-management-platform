@@ -1,5 +1,6 @@
 package saas_access_platform.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -19,6 +20,10 @@ import saas_access_platform.security.JwtAuthFilter;
 import saas_access_platform.security.RateLimitFilter;
 import saas_access_platform.security.TenantFilter;
 
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
@@ -28,17 +33,35 @@ public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
     private final TenantFilter tenantFilter;
     private final RateLimitFilter rateLimitFilter;
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http)
             throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
+                .anonymous(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .anyRequest().authenticated()
+                )
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint((request,
+                                                   response,
+                                                   authException) -> {
+                            response.setStatus(401);
+                            response.setContentType("application/json");
+
+                            Map<String, Object> body = new LinkedHashMap<>();
+                            body.put("status", 401);
+                            body.put("message", "Full authentication is required to access this resource");
+                            body.put("timestamp", LocalDateTime.now());
+
+                            objectMapper.writeValue(response.getWriter(), body);
+                        })
                 )
                 .addFilterBefore(jwtAuthFilter,  // Confirm filter flow
                         UsernamePasswordAuthenticationFilter.class)
