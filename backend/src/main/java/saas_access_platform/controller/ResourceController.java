@@ -2,6 +2,7 @@ package saas_access_platform.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -30,8 +31,10 @@ public class ResourceController {
 
     @GetMapping
     @PreAuthorize("hasPermission(null, 'RESOURCE_READ')")
-    public ResponseEntity<List<Resource>> getAllResources() {
-        return ResponseEntity.ok(resourceService.getAllResources());
+    public ResponseEntity<Page<Resource>> getAllResources(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ResponseEntity.ok(resourceService.getAllResources(page, size));
     }
 
     @GetMapping("/{id}")
