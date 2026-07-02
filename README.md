@@ -173,6 +173,9 @@ Actions logged automatically via AOP:
 | RESOURCE_DELETED | deleteResource() |
 | ROLE_CREATED | createRole() |
 | ROLE_ASSIGNED | assignRoleToUser() |
+| PERMISSION_ASSIGNED | assignPermissionToRole() |
+| PERMISSION_REMOVED | removePermissionFromRole() |
+| ADMIN_TRANSFERRED | transferAdmin() |
 
 Actions logged manually:
 
@@ -253,7 +256,7 @@ of the call.
 | permissions | Global permission catalog (system-level, not org-scoped) |
 | role_permissions | Maps permissions to roles |
 | user_roles | Maps roles to users |
-| resources | Tenant-scoped business objects |
+| resources | Tenant-scoped business objects — name, optional description, owner |
 | invitations | Token-based invite flow with 48hr expiry and single-use enforcement |
 | audit_logs | Immutable append-only change history |
 
@@ -347,7 +350,6 @@ Request:
 ```json
 {
     "name": "Primary Database",
-    "type": "DATABASE",
     "description": "Main production database"
 }
 ```
@@ -358,6 +360,7 @@ Response `201`:
     "id": 1,
     "orgId": 1,
     "name": "Primary Database",
+    "description": "Main production database",
     "ownerUserId": 1,
     "createdAt": "2026-06-29T12:00:00"
 }
@@ -369,7 +372,6 @@ Request:
 ```json
 {
     "name": "Primary Database — Updated",
-    "type": "DATABASE",
     "description": "Updated description"
 }
 ```
@@ -380,6 +382,35 @@ Response `200` — same shape as the create response with updated fields.
 
 Response `204 No Content` — no body returned.
 
+**GET /api/resources?page=0&size=10**
+
+`GET /api/resources` is paginated. `page` is 0-indexed (Spring convention) and `size`
+defaults to 10 if omitted.
+
+Response `200`:
+```json
+{
+    "content": [
+        {
+            "id": 1,
+            "orgId": 1,
+            "name": "Primary Database",
+            "description": "Main production database",
+            "ownerUserId": 1,
+            "createdAt": "2026-06-29T12:00:00"
+        }
+    ],
+    "totalElements": 23,
+    "totalPages": 3,
+    "number": 0,
+    "size": 10
+}
+```
+
+Results are sorted by `createdAt` descending. The frontend converts between its own
+1-indexed page display and this 0-indexed API at the point of the request — the backend
+stays on Spring's native convention rather than shifting it to match the UI.
+
 **GET /api/resources/search?name=database**
 
 Response `200`:
@@ -389,13 +420,15 @@ Response `200`:
         "id": 1,
         "orgId": 1,
         "name": "Primary Database",
+        "description": "Main production database",
         "ownerUserId": 1,
         "createdAt": "2026-06-29T12:00:00"
     }
 ]
 ```
 
-Results are filtered by name within the caller's org only.
+Results are filtered by name within the caller's org only. Search results are not paginated —
+this endpoint returns the full matching set.
 
 ---
 
@@ -407,7 +440,9 @@ Results are filtered by name within the caller's org only.
 | GET | /api/roles | ROLE_READ |
 | POST | /api/roles/{roleId}/assign/{userId} | ROLE_ASSIGN |
 | POST | /api/roles/{roleId}/permissions/{permissionId} | ROLE_ASSIGN |
+| DELETE | /api/roles/{roleId}/permissions/{permissionId} | ROLE_ASSIGN |
 | GET | /api/roles/{roleId}/permissions | ROLE_READ |
+| POST | /api/roles/transfer-admin/{newUserId} | ROLE_ASSIGN |
 
 **POST /api/roles**
 
@@ -440,6 +475,12 @@ No request body. Both `roleId` and `permissionId` are path variables.
 
 Response `204 No Content` — no body returned.
 
+**DELETE /api/roles/{roleId}/permissions/{permissionId}**
+
+No request body. Both `roleId` and `permissionId` are path variables.
+
+Response `204 No Content` — no body returned.
+
 **GET /api/roles/{roleId}/permissions**
 
 Response `200`:
@@ -453,6 +494,33 @@ Response `200`:
 ]
 ```
 
+**POST /api/roles/transfer-admin/{newUserId}**
+
+No request body. Transfers the Admin role from the caller to `newUserId` in a single
+transactional operation — the caller loses Admin, the target user gains it. There is exactly
+one Admin per organization at all times.
+
+Response `204 No Content` — no body returned.
+
+---
+
+### Admin Role Governance
+
+The Admin role created at organization registration is subject to two invariants, enforced
+in `RoleService` rather than only in the frontend:
+
+**1. Admin's permission set is immutable.** `assignPermissionToRole` and
+`removePermissionFromRole` both reject any attempt to modify the Admin role's permissions
+with `400 "Admin role permissions cannot be modified"`. Admin always holds all 9 system
+permissions.
+
+**2. There is exactly one Admin per organization, and it moves by transfer, not direct
+assignment.** `assignRoleToUser` rejects any attempt to assign the Admin role directly with
+`400 "Admin role cannot be assigned directly — use transfer-admin instead"`. The only way to
+change who holds Admin is `POST /api/roles/transfer-admin/{newUserId}`, which atomically
+demotes the caller and promotes the target inside a single `@Transactional` block — an
+organization can never end up with zero or multiple Admins, even under a partial failure.
+
 ---
 
 ### Invitations — JWT required
@@ -460,6 +528,10 @@ Response `200`:
 | Method | Endpoint | Permission |
 |---|---|---|
 | POST | /api/invitations | USER_INVITE |
+| GET | /api/invitations | USER_INVITE |
+| DELETE | /api/invitations/{invitationId} | USER_INVITE |
+
+**POST /api/invitations**
 
 Request:
 ```json
@@ -478,6 +550,64 @@ Response `201`:
 }
 ```
 
+**GET /api/invitations**
+
+Lists pending invitations for the caller's org.
+
+Response `200`:
+```json
+[
+    {
+        "id": 4,
+        "email": "bob@acme.com",
+        "roleName": "ReadOnly",
+        "status": "PENDING",
+        "expiresAt": "2026-07-01T13:28:55.317"
+    }
+]
+```
+
+Note this returns a different shape than the send response — no `token` field, since a
+list of everyone currently invited should not expose raw invitation tokens. Includes `id`
+(needed to revoke) and `roleName` (resolved server-side from `roleId`) instead.
+
+**DELETE /api/invitations/{invitationId}**
+
+Revokes a pending invitation by deleting it outright — there is no separate "revoked" status
+in the `InvitationStatus` enum, since a cancelled invite has no further use. Only invitations
+still in `PENDING` status can be revoked.
+
+Response `204 No Content` — no body returned.
+
+---
+
+### Users — JWT required
+
+| Method | Endpoint | Permission |
+|---|---|---|
+| GET | /api/users | ROLE_READ |
+
+Lists all members of the caller's organization along with their assigned role name(s). This
+endpoint reuses `ROLE_READ` rather than introducing a new permission code — seeing who holds
+which role is part of the same "reading role assignments" concern the permission already
+covers, and the permission catalog is deliberately fixed at 9 codes.
+
+Response `200`:
+```json
+[
+    {
+        "id": 2,
+        "email": "priya@acme.com",
+        "status": "ACTIVE",
+        "roles": ["ReadOnly"],
+        "createdAt": "2026-06-29T12:51:47.842596"
+    }
+]
+```
+
+Used by the frontend to populate the Transfer Admin member picker, and to derive
+"active members" and "members per role" counts without a separate aggregation endpoint.
+
 ---
 
 ### Audit Logs — JWT required
@@ -486,35 +616,48 @@ Response `201`:
 |---|---|---|
 | GET | /api/audit-logs | AUDIT_VIEW |
 
+`GET /api/audit-logs` is paginated. `page` is 0-indexed, `size` defaults to 20 (larger than
+Resources' default of 10, since audit rows are short and scanned quickly).
+
 Response `200`:
 ```json
-[
-    {
-        "id": 6,
-        "orgId": 1,
-        "actorUserId": 2,
-        "action": "USER_JOINED",
-        "entityType": "USER",
-        "entityId": 2,
-        "oldValue": null,
-        "newValue": null,
-        "timestamp": "2026-06-29T12:51:47.842596"
-    },
-    {
-        "id": 5,
-        "orgId": 1,
-        "actorUserId": 1,
-        "action": "INVITE_SENT",
-        "entityType": "INVITATION",
-        "entityId": 0,
-        "oldValue": null,
-        "newValue": null,
-        "timestamp": "2026-06-29T12:50:55.089218"
-    }
-]
+{
+    "content": [
+        {
+            "id": 6,
+            "orgId": 1,
+            "actorUserId": 2,
+            "action": "USER_JOINED",
+            "entityType": "USER",
+            "entityId": 2,
+            "oldValue": null,
+            "newValue": null,
+            "timestamp": "2026-06-29T12:51:47.842596"
+        },
+        {
+            "id": 5,
+            "orgId": 1,
+            "actorUserId": 1,
+            "action": "INVITE_SENT",
+            "entityType": "INVITATION",
+            "entityId": 0,
+            "oldValue": null,
+            "newValue": null,
+            "timestamp": "2026-06-29T12:50:55.089218"
+        }
+    ],
+    "totalElements": 67,
+    "totalPages": 4,
+    "number": 0,
+    "size": 20
+}
 ```
 
-Results are ordered by timestamp descending and scoped to the caller's org.
+Results are sorted by timestamp descending and scoped to the caller's org. The frontend's
+action-type and actor-email filters are applied client-side against the currently loaded page
+only — filtering does not span unloaded pages. A production version of this feature would move
+filtering server-side via query parameters; kept client-side here since the backend returns
+one page at a time by design.
 
 ---
 
@@ -652,6 +795,56 @@ passing through `GlobalExceptionHandler`.
 
 ---
 
+### Phase 6 — Admin Governance, Extended Endpoints, Pagination
+
+Backend additions made while designing the React frontend against the real API. Not yet tested.
+
+| Test | Expected | Result |
+|---|---|---|
+| Remove permission from non-Admin role | 204 No Content | Pending |
+| Confirm permission removed | 200, permission no longer listed | Pending |
+| Remove same permission twice | 404 Permission not assigned to this role | Pending |
+| Remove permission from role in another org | 404 | Pending |
+| Remove permission without ROLE_ASSIGN | 403 | Pending |
+| Add permission to Admin role | 400 Admin role permissions cannot be modified | Pending |
+| Remove permission from Admin role | 400 Admin role permissions cannot be modified | Pending |
+| Directly assign Admin role to a user | 400 Admin role cannot be assigned directly | Pending |
+| Confirm Admin retains all 9 permissions after attempts above | 200, 9 permissions unchanged | Pending |
+| Non-admin attempts admin transfer | 400 Only the current Admin can transfer | Pending |
+| Admin transfers to self | 400 User is already the Admin | Pending |
+| Admin transfers to non-existent user | 404 User not found | Pending |
+| Admin transfers to valid user | 204, old admin demoted, new admin promoted | Pending |
+| Confirm exactly one Admin exists after transfer | 200, only new admin has Admin role | Pending |
+| Old admin attempts second transfer post-demotion | 400 Only the current Admin can transfer | Pending |
+| List org members | 200, scoped to caller's org, includes roles | Pending |
+| List org members — cross-tenant isolation | 200, no leakage across orgs | Pending |
+| List org members without ROLE_READ | 403 | Pending |
+| List pending invitations | 200, only PENDING status | Pending |
+| Revoke pending invitation | 204 | Pending |
+| Confirm revoked invitation removed from list | 200, no longer present | Pending |
+| Revoke already-accepted invitation | 400 Only pending invitations can be revoked | Pending |
+| Revoke invitation from another org | 404 | Pending |
+| Revoked invitation token cannot be accepted | 400 Invalid invitation token | Pending |
+| Create resource with description | 201, description in response | Pending |
+| Create resource without description | 201, description null, no error | Pending |
+| Update resource description | 200, description updated | Pending |
+| Description over 500 characters | 400 validation error | Pending |
+| Resource list, default pagination | 200, Page object, page=0 size=10 | Pending |
+| Resource list, explicit page/size | 200, correct content count and totalElements | Pending |
+| Resource list, page beyond available data | 200, empty content array | Pending |
+| Resource list sort order | Sorted by createdAt descending | Pending |
+| Audit log, default pagination | 200, Page object, size=20 | Pending |
+| Audit log, explicit page/size | 200, correct content count | Pending |
+| Audit log sort order | Sorted by timestamp descending | Pending |
+| Audit log, page beyond available data | 200, empty content array | Pending |
+| Permission assigned logs PERMISSION_ASSIGNED | New audit entry with correct actor and entity | Pending |
+| Permission removed logs PERMISSION_REMOVED | New audit entry with correct actor and entity | Pending |
+| Admin transfer logs ADMIN_TRANSFERRED | New audit entry | Pending |
+| Failed Admin-immutability attempts do not log | No audit entry created (AOP only fires on success) | Pending |
+| Full end-to-end regression (register → invite → accept → transfer → paginate → verify audit trail) | All steps succeed in sequence, no state corruption | Pending |
+
+---
+
 ## Design Decisions
 
 ### Why shared schema over schema-per-tenant?
@@ -738,6 +931,41 @@ would itself contribute to exhausting that limit, which defeats the purpose of e
 endpoint in the first place. Production APIs such as GitHub's rate limit status endpoint
 follow the same pattern — monitoring endpoints are excluded from the limit they report on.
 
+### Why a single transferable Admin instead of multiple Admins or an immutable one?
+
+Two simpler alternatives were considered and rejected. Allowing multiple Admins per org adds
+coordination complexity (who can override whom) with no clear benefit at this project's scale.
+A single, permanently fixed Admin is simpler but has no recovery path if the original Admin
+leaves the organization. A single, transferable Admin gets the simplicity of "exactly one
+Admin, always" while still allowing succession — the current Admin explicitly hands off the
+role, and `transferAdmin` performs the demote-and-promote as one atomic operation so the
+organization is never left with zero Admins mid-transfer.
+
+### Why is Admin's permission set enforced as immutable in the service layer, not just hidden in the UI?
+
+A frontend can disable a checkbox, but nothing stops a direct API call from reaching
+`assignPermissionToRole`/`removePermissionFromRole` regardless of what the UI shows. The guard
+belongs in `RoleService`, checked against the role's name, so the invariant holds no matter
+which client — the React app, Postman, or a future mobile client — is making the request.
+
+### Why does pagination stay 0-indexed in the API instead of matching the UI's 1-indexed display?
+
+Spring's `Pageable`/`Page<T>` are built around 0-indexed pages as a framework-wide convention;
+`PageRequest.of(0, size)` is page one internally, and the `Page` response's `number` field is
+populated the same way. Shifting the backend to accept 1-indexed input would desynchronize the
+request convention from the response convention, since the response's `number` field would
+still be 0-indexed regardless. The conversion is handled once, at the frontend's UI boundary —
+React keeps 1-indexed state for anything a human reads (page labels, buttons) and subtracts 1
+only when constructing the request URL.
+
+### Why does revoking an invitation delete the row instead of adding a REVOKED status?
+
+The `InvitationStatus` enum (`PENDING`, `ACCEPTED`, `EXPIRED`) tracks states that matter for
+business logic — whether a token can still be used. A cancelled invitation has no further use
+and nothing downstream needs to distinguish "revoked" from "no longer exists." Deleting the row
+keeps the enum focused on states that are actually queried against, rather than growing it for
+a state that would only ever be read once, if at all.
+
 ---
 
 ## Build Progress
@@ -750,9 +978,23 @@ follow the same pattern — monitoring endpoints are excluded from the limit the
 | 3 | RBAC — custom PermissionEvaluator, roles, permission assignment | Complete |
 | 4 | Invitations + Audit Log — invite flow, AuditAspect, audit log endpoint | Complete |
 | 5 | Rate Limiting — Redis, token bucket, atomic Lua script, usage endpoint | Complete |
-| 6 | React Frontend — login, resources, roles, invitations, audit log | Pending |
-| 7 | Tests — tenant isolation, RBAC, rate limiting | Pending |
+| 6 | React Frontend — design finalized for all screens; backend extended mid-phase (see below); React build not yet started | In progress |
+| 7 | Tests — full regression pass across Phase 6 backend additions, then tenant isolation, RBAC, rate limiting | Pending |
 | 8 | Docker + Deploy — multi-stage Dockerfile, Render/Railway | Pending |
+
+**Backend additions made during Phase 6 frontend design** (surfaced by designing against the
+real API rather than an assumed one):
+
+- `DELETE /api/roles/{roleId}/permissions/{permissionId}` — permissions could previously only be added, not removed
+- Admin role governance — immutable permissions, single transferable Admin via `POST /api/roles/transfer-admin/{newUserId}`
+- `GET /api/users` — needed to populate the Transfer Admin member picker and to derive member counts without duplicating data
+- `GET /api/invitations` and `DELETE /api/invitations/{invitationId}` — listing and revoking pending invitations
+- `description` field added to `Resource`
+- Pagination added to `GET /api/resources` and `GET /api/audit-logs`
+- Two previously-unlogged actions (`assignPermissionToRole`, `removePermissionFromRole`) added to `AuditAspect`
+
+None of these have been tested yet — see [Test Coverage](#test-coverage) for the full pass
+planned before the React build begins.
 
 ---
 
