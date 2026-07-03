@@ -176,6 +176,17 @@ Actions logged automatically via AOP:
 | PERMISSION_ASSIGNED | assignPermissionToRole() |
 | PERMISSION_REMOVED | removePermissionFromRole() |
 | ADMIN_TRANSFERRED | transferAdmin() |
+| USER_DEACTIVATED | deactivateUser() |
+
+**Fixed during testing:** `entityId` originally showed `0` for every create-style action
+(`RESOURCE_CREATED`, `INVITE_SENT`, `ROLE_CREATED`) because the aspect only inspected the
+method's *arguments* — but create endpoints take a request DTO with no ID, since the entity's
+ID doesn't exist until after the save. The fix adds a `returning` clause to `@AfterReturning`
+so the aspect can also inspect the method's *return value*, reflectively reading `getId()` off
+the response body (unwrapping `ResponseEntity` first) before falling back to argument-scanning
+for update/delete-style methods where the ID is a path variable instead. `transferAdmin` was
+also resolving to `entityType: "UNKNOWN"` since its method name matched none of the existing
+substring checks — fixed by adding an explicit case.
 
 Actions logged manually:
 
@@ -544,11 +555,19 @@ Request:
 Response `201`:
 ```json
 {
+    "id": 4,
     "token": "9f0ab181-eed3-47e1-8a04-750b2a6ac0a7",
     "email": "bob@acme.com",
     "expiresAt": "2026-07-01T13:28:55.317"
 }
 ```
+
+`id` is the invitation record's own primary key (not a user ID), included so the audit log can
+correctly attribute an `entityId` to `INVITE_SENT` entries. This is only ever returned to the
+org admin who is sending the invitation — a `USER_INVITE`-gated endpoint — never to the invitee,
+who receives the invitation out-of-band and never calls this endpoint at all. Since that same
+response already includes the far more sensitive `token`, including `id` alongside it exposes
+nothing new to anyone who wasn't already trusted with more.
 
 **GET /api/invitations**
 
@@ -586,6 +605,9 @@ Response `204 No Content` — no body returned.
 | Method | Endpoint | Permission |
 |---|---|---|
 | GET | /api/users | ROLE_READ |
+| PATCH | /api/users/{userId}/deactivate | USER_INVITE |
+
+**GET /api/users**
 
 Lists all members of the caller's organization along with their assigned role name(s). This
 endpoint reuses `ROLE_READ` rather than introducing a new permission code — seeing who holds
@@ -607,6 +629,27 @@ Response `200`:
 
 Used by the frontend to populate the Transfer Admin member picker, and to derive
 "active members" and "members per role" counts without a separate aggregation endpoint.
+
+**PATCH /api/users/{userId}/deactivate**
+
+Soft-deletes a user by setting `status` to `DISABLED` rather than removing the row. Reuses
+`USER_INVITE` — deactivating is treated as the symmetric opposite of inviting, both being the
+same "manage who's in the org" concern.
+
+No request body.
+
+Response `204 No Content` on success. Rejected with `400` in three cases:
+- Caller attempts to deactivate their own account ("Cannot deactivate your own account")
+- Target user currently holds the Admin role ("Cannot deactivate the current Admin — transfer
+  admin rights first")
+- Target user is already `DISABLED` ("User is already deactivated")
+
+`404` if the target user doesn't exist or belongs to a different org.
+
+A disabled user's credentials still exist but `AuthService.login` rejects them with the same
+generic `"Invalid credentials"` message used for a wrong password — not a distinct "account
+disabled" message — so a login attempt cannot be used to probe whether a given email
+corresponds to a deactivated account.
 
 ---
 
@@ -797,51 +840,50 @@ passing through `GlobalExceptionHandler`.
 
 ### Phase 6 — Admin Governance, Extended Endpoints, Pagination
 
-Backend additions made while designing the React frontend against the real API. Not yet tested.
-
 | Test | Expected | Result |
 |---|---|---|
-| Remove permission from non-Admin role | 204 No Content | Pending |
-| Confirm permission removed | 200, permission no longer listed | Pending |
-| Remove same permission twice | 404 Permission not assigned to this role | Pending |
-| Remove permission from role in another org | 404 | Pending |
-| Remove permission without ROLE_ASSIGN | 403 | Pending |
-| Add permission to Admin role | 400 Admin role permissions cannot be modified | Pending |
-| Remove permission from Admin role | 400 Admin role permissions cannot be modified | Pending |
-| Directly assign Admin role to a user | 400 Admin role cannot be assigned directly | Pending |
-| Confirm Admin retains all 9 permissions after attempts above | 200, 9 permissions unchanged | Pending |
-| Non-admin attempts admin transfer | 400 Only the current Admin can transfer | Pending |
-| Admin transfers to self | 400 User is already the Admin | Pending |
-| Admin transfers to non-existent user | 404 User not found | Pending |
-| Admin transfers to valid user | 204, old admin demoted, new admin promoted | Pending |
-| Confirm exactly one Admin exists after transfer | 200, only new admin has Admin role | Pending |
-| Old admin attempts second transfer post-demotion | 400 Only the current Admin can transfer | Pending |
-| List org members | 200, scoped to caller's org, includes roles | Pending |
-| List org members — cross-tenant isolation | 200, no leakage across orgs | Pending |
-| List org members without ROLE_READ | 403 | Pending |
-| List pending invitations | 200, only PENDING status | Pending |
-| Revoke pending invitation | 204 | Pending |
-| Confirm revoked invitation removed from list | 200, no longer present | Pending |
-| Revoke already-accepted invitation | 400 Only pending invitations can be revoked | Pending |
-| Revoke invitation from another org | 404 | Pending |
-| Revoked invitation token cannot be accepted | 400 Invalid invitation token | Pending |
-| Create resource with description | 201, description in response | Pending |
-| Create resource without description | 201, description null, no error | Pending |
-| Update resource description | 200, description updated | Pending |
-| Description over 500 characters | 400 validation error | Pending |
-| Resource list, default pagination | 200, Page object, page=0 size=10 | Pending |
-| Resource list, explicit page/size | 200, correct content count and totalElements | Pending |
-| Resource list, page beyond available data | 200, empty content array | Pending |
-| Resource list sort order | Sorted by createdAt descending | Pending |
-| Audit log, default pagination | 200, Page object, size=20 | Pending |
-| Audit log, explicit page/size | 200, correct content count | Pending |
-| Audit log sort order | Sorted by timestamp descending | Pending |
-| Audit log, page beyond available data | 200, empty content array | Pending |
-| Permission assigned logs PERMISSION_ASSIGNED | New audit entry with correct actor and entity | Pending |
-| Permission removed logs PERMISSION_REMOVED | New audit entry with correct actor and entity | Pending |
-| Admin transfer logs ADMIN_TRANSFERRED | New audit entry | Pending |
-| Failed Admin-immutability attempts do not log | No audit entry created (AOP only fires on success) | Pending |
-| Full end-to-end regression (register → invite → accept → transfer → paginate → verify audit trail) | All steps succeed in sequence, no state corruption | Pending |
+| Remove permission from non-Admin role | 204 No Content | Passed |
+| Confirm permission removed | 200, permission no longer listed | Passed |
+| Remove same permission twice | 404 Permission not assigned to this role | Passed |
+| Remove permission from role in another org | 404 | Passed |
+| Add permission to Admin role | 400 Admin role permissions cannot be modified | Passed |
+| Remove permission from Admin role | 400 Admin role permissions cannot be modified | Passed |
+| Directly assign Admin role to a user | 400 Admin role cannot be assigned directly | Passed |
+| Confirm Admin retains all 9 permissions after attempts above | 200, 9 permissions unchanged | Passed |
+| Non-admin without ROLE_ASSIGN attempts admin transfer | 403 (blocked by @PreAuthorize before reaching the service-layer check) | Passed |
+| Admin transfers to self | 400 User is already the Admin | Passed |
+| Admin transfers to valid user | 204, old admin demoted, new admin promoted | Passed |
+| Confirm exactly one Admin exists after transfer | 200, only new admin has Admin role | Passed |
+| Old admin's pre-transfer JWT loses admin access immediately | 403 on admin-only actions, despite JWT still claiming "Admin" — confirms live DB permission checks, not JWT-trusted | Passed |
+| List org members | 200, scoped to caller's org, includes roles | Passed |
+| List pending invitations | 200, only PENDING status | Passed |
+| Revoke pending invitation | 204 | Passed |
+| Confirm revoked invitation removed from list | 200, no longer present | Passed |
+| Revoke already-accepted invitation | 400 Only pending invitations can be revoked | Passed |
+| Revoke invitation from another org | 404 | Passed |
+| Revoke non-existent invitation | 404 | Passed |
+| Create resource with description | 201, description in response | Passed |
+| Create resource without description | 201, description null, no error | Passed |
+| Description over 500 characters | 400 validation error | Passed |
+| Resource list, default pagination | 200, Page object, page=0 size=10 | Passed |
+| Resource list sort order | Sorted by createdAt descending | Passed |
+| Cross-tenant resource access by ID | 404 not 403 | Passed |
+| Search resources by name (no match) | 200, empty array | Passed |
+| Search resources by name (match) | 200, correct result | Passed |
+| Audit log, default pagination | 200, Page object, size=20 | Passed |
+| Audit log sort order | Sorted by timestamp descending | Passed |
+| entityId populated correctly for create actions after fix | Real entity ID instead of 0 | Passed |
+| entityType correct for transferAdmin after fix | "USER" instead of "UNKNOWN" | Passed |
+| Unauthenticated request returns 401 not 403 | 401, proper JSON body matching standard error shape | Passed (bug found and fixed) |
+| Deactivate non-admin user | 204 No Content | Passed |
+| Deactivated user cannot log in | 400 Invalid credentials (generic, not "account disabled") | Passed |
+| Self-deactivation blocked | 400 Cannot deactivate your own account | Passed |
+| Deactivate already-disabled user | 400 User is already deactivated | Passed |
+| Deactivate non-existent user | 404 | Passed |
+| Cross-tenant deactivation attempt | 404 | Passed |
+| Rate limit burst against real endpoint, then check usage | 429 after ~100 requests; /api/usage reflects near-zero tokens; subsequent checks show continuous refill (~1.67/sec) | Passed |
+| /api/usage itself excluded from rate limiting under burst | Repeated /api/usage calls stay 200, tokens unaffected | Passed |
+| Deactivate current Admin (by a second admin) | Blocked by service-layer guard | Not independently testable — only one Admin exists at a time by design, so this path has no reachable second-admin scenario in current test data |
 
 ---
 
@@ -966,6 +1008,73 @@ and nothing downstream needs to distinguish "revoked" from "no longer exists." D
 keeps the enum focused on states that are actually queried against, rather than growing it for
 a state that would only ever be read once, if at all.
 
+### Why doesn't transferAdmin also reassign a role to the demoted admin?
+
+After a transfer, the previous Admin is left with no role at all rather than being
+auto-demoted to some default role. This is intentional, not an oversight: `transferAdmin` has
+exactly one job — move the Admin role to someone else — and it cannot know from that call alone
+whether the previous Admin is staying on as a regular member or leaving the organization
+entirely. These are two independent decisions requiring two independent actions:
+
+- **Staying, with reduced privileges** — the new Admin calls the existing
+  `POST /api/roles/{roleId}/assign/{userId}` to explicitly grant whichever role actually fits
+  (Viewer, Editor, etc.).
+- **Leaving the organization** — the new Admin calls
+  `PATCH /api/users/{userId}/deactivate` as a separate, deliberate action.
+
+Baking either behavior automatically into `transferAdmin` would silently do the wrong thing in
+the other case — an org where the previous Admin is staying on would have them unexpectedly
+locked out, while an org where they're leaving would have `transferAdmin` alone insufficient to
+actually revoke their access. Keeping transfer and deactivation as two independent, explicit
+operations avoids both failure modes.
+
+### Why deactivate instead of hard-delete a user?
+
+`userId` is referenced by `AuditLog.actorUserId`, `Resource.ownerUserId`, and role/invitation
+history, all of which are meant to remain intact as historical record even after a user leaves.
+Hard-deleting the user row would either violate foreign key constraints or leave those records
+pointing at a user that no longer exists, corrupting the audit trail's integrity. Deactivating
+via `User.status = DISABLED` blocks login while preserving every record that references the
+user — the same pattern used by real SaaS platforms (e.g. GitHub/Slack "remove from org" keeps
+history intact rather than deleting rows).
+
+### Why does a disabled user get the same "Invalid credentials" message as a wrong password, instead of "Account disabled"?
+
+A distinct message would let an attacker distinguish "this email exists but is disabled" from
+"this email/password combination is simply wrong" — leaking account existence and status to
+anyone probing the login endpoint. Returning the identical generic message for both cases
+closes that side channel, at the minor cost of a slightly less helpful error for the disabled
+user themselves (who would need to contact their org admin regardless).
+
+### Why does GlobalExceptionHandler implement AuthenticationEntryPoint instead of a lambda in SecurityConfig?
+
+Found and fixed during testing: requests with no JWT at all were returning `403 Forbidden`
+instead of `401 Unauthorized`. The cause was two-fold — Spring Security's default anonymous
+authentication filter assigns unauthenticated requests a fake low-privilege principal rather
+than leaving them truly unauthenticated, so `@PreAuthorize` denies them via `AccessDeniedException`
+(403) rather than the request ever reaching an `AuthenticationEntryPoint` (401). Disabling
+anonymous authentication (`.anonymous(AbstractHttpConfigurer::disable)`) surfaces the request as
+genuinely unauthenticated, but Spring's fallback entry point when none is configured
+(`Http403ForbiddenEntryPoint`) *also* returns 403 despite its name. A custom entry point is
+required to get a correct 401. Rather than defining that inline in `SecurityConfig` with its own
+`ObjectMapper`, `GlobalExceptionHandler` — already a `@RestControllerAdvice` bean — implements
+`AuthenticationEntryPoint` directly, so all error-response construction (401 alongside the
+existing 400/403/404/409 handlers) lives in one file, and `SecurityConfig` just wires it in as a
+bean reference with no serialization logic of its own.
+
+JWT's stateless design eliminates the need for a database lookup to establish *identity* —
+signature verification alone confirms who is making the request, without a session-store round
+trip. But permissions are different from identity: they are mutable, revocable authorization
+state, not a fixed fact about a user. If a permission set were baked into the JWT at login time
+and trusted for the token's full lifetime, a user demoted mid-session (e.g. the previous Admin
+after `transferAdmin`) would keep their old authorization until their token happened to expire —
+observed directly during testing, where the demoted Admin's still-valid JWT (claiming
+`"roles":["Admin"]`) correctly received `403` on admin-only actions, because
+`CustomPermissionEvaluator` re-derives `userId → UserRole → roleId → RolePermission → permissionCode`
+fresh from the database on every request rather than trusting the token's embedded claims. This
+makes access revocation immediate rather than dependent on token expiry, which matters more for
+this system's security guarantees than the small cost of one indexed join per request.
+
 ---
 
 ## Build Progress
@@ -978,23 +1087,24 @@ a state that would only ever be read once, if at all.
 | 3 | RBAC — custom PermissionEvaluator, roles, permission assignment | Complete |
 | 4 | Invitations + Audit Log — invite flow, AuditAspect, audit log endpoint | Complete |
 | 5 | Rate Limiting — Redis, token bucket, atomic Lua script, usage endpoint | Complete |
-| 6 | React Frontend — design finalized for all screens; backend extended mid-phase (see below); React build not yet started | In progress |
-| 7 | Tests — full regression pass across Phase 6 backend additions, then tenant isolation, RBAC, rate limiting | Pending |
+| 6a | Backend extensions — admin governance, deactivate-user, pagination, extended endpoints, full test pass (37 tests, 36 passed, 1 not independently testable) | Complete |
+| 6b | React Frontend — Vite init, Axios client, AuthContext, screens per finalized design system | Not yet started |
+| 7 | Tests — additional coverage as needed once frontend surfaces new edge cases | Pending |
 | 8 | Docker + Deploy — multi-stage Dockerfile, Render/Railway | Pending |
 
-**Backend additions made during Phase 6 frontend design** (surfaced by designing against the
-real API rather than an assumed one):
+**Backend additions made during Phase 6a** (surfaced by designing against the real API and
+then testing it end-to-end, rather than assuming either was correct):
 
 - `DELETE /api/roles/{roleId}/permissions/{permissionId}` — permissions could previously only be added, not removed
 - Admin role governance — immutable permissions, single transferable Admin via `POST /api/roles/transfer-admin/{newUserId}`
-- `GET /api/users` — needed to populate the Transfer Admin member picker and to derive member counts without duplicating data
+- `GET /api/users` and `PATCH /api/users/{userId}/deactivate` — member listing and soft-delete, kept as two independent operations from admin transfer by design
 - `GET /api/invitations` and `DELETE /api/invitations/{invitationId}` — listing and revoking pending invitations
 - `description` field added to `Resource`
 - Pagination added to `GET /api/resources` and `GET /api/audit-logs`
-- Two previously-unlogged actions (`assignPermissionToRole`, `removePermissionFromRole`) added to `AuditAspect`
-
-None of these have been tested yet — see [Test Coverage](#test-coverage) for the full pass
-planned before the React build begins.
+- Two bugs found and fixed via testing, not by inspection: unauthenticated requests returning
+  403 instead of 401 (anonymous auth + missing custom entry point), and `AuditAspect` recording
+  `entityId: 0` on all create-style actions (aspect only inspected method arguments, not the
+  return value)
 
 ---
 
