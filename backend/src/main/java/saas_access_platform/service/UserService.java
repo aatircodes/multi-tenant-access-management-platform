@@ -5,6 +5,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import saas_access_platform.dto.response.UserResponse;
 import saas_access_platform.entity.Role;
+import saas_access_platform.entity.User;
+import saas_access_platform.exception.ResourceNotFoundException;
 import saas_access_platform.repository.RoleRepository;
 import saas_access_platform.repository.UserRepository;
 import saas_access_platform.repository.UserRoleRepository;
@@ -40,5 +42,33 @@ public class UserService {
                         .createdAt(user.getCreatedAt())
                         .build())
                 .toList();
+    }
+
+    public void deactivateUser(Long userId) {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        if (userId.equals(currentUser.getUserId())) {
+            throw new RuntimeException("Cannot deactivate your own account");
+        }
+
+        User targetUser = userRepository.findByIdAndOrgId(userId, currentUser.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        Role adminRole = roleRepository.findByNameAndOrgId("Admin", currentUser.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Admin role not found"));
+
+        boolean targetIsAdmin = userRoleRepository
+                .existsByUserIdAndRoleId(targetUser.getId(), adminRole.getId());
+        if (targetIsAdmin) {
+            throw new RuntimeException("Cannot deactivate the current Admin — transfer admin rights first");
+        }
+
+        if (targetUser.getStatus() == User.UserStatus.DISABLED) {
+            throw new RuntimeException("User is already deactivated");
+        }
+
+        targetUser.setStatus(User.UserStatus.DISABLED);
+        userRepository.save(targetUser);
     }
 }
