@@ -111,6 +111,10 @@ public class AuthService {
             throw new RuntimeException("Invalid credentials");
         }
 
+        if (user.getStatus() == User.UserStatus.DISABLED) {
+            throw new RuntimeException("Invalid credentials");
+        }
+
         List<String> roles = userRoleRepository
                 .findAllByUserId(user.getId())
                 .stream()
