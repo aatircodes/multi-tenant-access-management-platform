@@ -53,8 +53,8 @@ public class InvitationService {
 
         invitationRepository.save(invitation);
 
-        return new InvitationResponse(token, request.getEmail(),
-                LocalDateTime.now().plusHours(48));
+        return new InvitationResponse(invitation.getId(), token, request.getEmail(),
+                invitation.getExpiresAt());
     }
 
     public List<PendingInvitationResponse> getPendingInvitations() {
