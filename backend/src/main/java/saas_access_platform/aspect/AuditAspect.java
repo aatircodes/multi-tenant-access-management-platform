@@ -4,12 +4,15 @@ import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.AfterReturning;
 import org.aspectj.lang.annotation.Aspect;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import saas_access_platform.entity.AuditLog;
 import saas_access_platform.repository.AuditLogRepository;
 import saas_access_platform.security.CurrentUserContext;
+
+import java.lang.reflect.Method;
 
 @Aspect
 @Component
@@ -18,8 +21,11 @@ public class AuditAspect {
 
     private final AuditLogRepository auditLogRepository;
 
-    @AfterReturning("execution(* saas_access_platform.controller..*(..))")
-    public void logAudit(JoinPoint joinPoint) {
+    @AfterReturning(
+            pointcut = "execution(* saas_access_platform.controller..*(..))",
+            returning = "result"
+    )
+    public void logAudit(JoinPoint joinPoint, Object result) {
 
         Authentication authentication = SecurityContextHolder
                 .getContext()
@@ -39,7 +45,7 @@ public class AuditAspect {
         }
 
         String entityType = resolveEntityType(methodName);
-        Long entityId = resolveEntityId(joinPoint);
+        Long entityId = resolveEntityId(joinPoint, result);
 
         AuditLog auditLog = AuditLog.builder()
                 .orgId(currentUser.getOrgId())
@@ -72,10 +78,20 @@ public class AuditAspect {
         if (methodName.contains("Resource")) return "RESOURCE";
         if (methodName.contains("Role"))     return "ROLE";
         if (methodName.contains("nvitation") || methodName.equals("acceptInvitation")) return "INVITATION";
+        if (methodName.equals("transferAdmin")) return "USER";
         return "UNKNOWN";
     }
 
-    private Long resolveEntityId(JoinPoint joinPoint) {
+    private Long resolveEntityId(JoinPoint joinPoint, Object result) {
+        // First, try to pull an ID off the returned object (covers create* methods,
+        // where the new entity's ID doesn't exist until after the save)
+        Long idFromResult = extractIdFromResult(result);
+        if (idFromResult != null) {
+            return idFromResult;
+        }
+
+        // Fall back to scanning method arguments (covers update/delete/assign methods,
+        // where the ID is a path variable passed in, not generated)
         Object[] args = joinPoint.getArgs();
         for (Object arg : args) {
             if (arg instanceof Long) {
@@ -83,5 +99,25 @@ public class AuditAspect {
             }
         }
         return 0L;
+    }
+
+    private Long extractIdFromResult(Object result) {
+        try {
+            Object body = result;
+            if (result instanceof ResponseEntity<?> responseEntity) {
+                body = responseEntity.getBody();
+            }
+            if (body == null) {
+                return null;
+            }
+            Method getId = body.getClass().getMethod("getId");
+            Object id = getId.invoke(body);
+            if (id instanceof Long) {
+                return (Long) id;
+            }
+        } catch (Exception ignored) {
+            // Response body has no getId() (e.g. Void, List, Page) — fall back to arg scan
+        }
+        return null;
     }
 }
