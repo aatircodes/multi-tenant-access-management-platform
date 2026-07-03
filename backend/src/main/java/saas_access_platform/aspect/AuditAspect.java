@@ -70,6 +70,7 @@ public class AuditAspect {
             case "assignPermissionToRole":   return "PERMISSION_ASSIGNED";
             case "removePermissionFromRole": return "PERMISSION_REMOVED";
             case "transferAdmin":            return "ADMIN_TRANSFERRED";
+            case "deactivateUser":           return "USER_DEACTIVATED";
             default:                         return null;
         }
     }
