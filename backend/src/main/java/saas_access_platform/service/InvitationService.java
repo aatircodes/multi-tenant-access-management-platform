@@ -13,6 +13,12 @@ import saas_access_platform.repository.InvitationRepository;
 import saas_access_platform.repository.RoleRepository;
 import saas_access_platform.repository.UserRepository;
 import saas_access_platform.security.CurrentUserContext;
+import saas_access_platform.dto.response.InvitationLookupResponse;
+import saas_access_platform.entity.Organization;
+import saas_access_platform.exception.InvalidInvitationException;
+import saas_access_platform.repository.OrganizationRepository;
+
+import java.time.LocalDateTime;
 
 import java.util.List;
 import java.util.UUID;
@@ -24,6 +30,7 @@ public class InvitationService {
     private final InvitationRepository invitationRepository;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final OrganizationRepository organizationRepository;
 
     public InvitationResponse sendInvitation(InviteUserRequest request) {
 
@@ -109,5 +116,36 @@ public class InvitationService {
         }
 
         invitationRepository.delete(invitation);
+    }
+
+    public InvitationLookupResponse getInvitationByToken(String token) {
+
+        Invitation invitation = invitationRepository.findByToken(token)
+                .orElseThrow(() -> new ResourceNotFoundException("Invitation not found"));
+
+        // Lazy expiry check — no scheduled job marks these EXPIRED on its own,
+        // so correcting it here the moment anyone actually looks it up.
+        if (invitation.getStatus() == Invitation.InvitationStatus.PENDING
+                && invitation.getExpiresAt().isBefore(LocalDateTime.now())) {
+            invitation.setStatus(Invitation.InvitationStatus.EXPIRED);
+            invitationRepository.save(invitation);
+        }
+
+        if (invitation.getStatus() != Invitation.InvitationStatus.PENDING) {
+            throw new InvalidInvitationException("This invitation is no longer valid");
+        }
+
+        Organization org = organizationRepository.findById(invitation.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
+
+        Role role = roleRepository.findById(invitation.getRoleId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        return InvitationLookupResponse.builder()
+                .email(invitation.getEmail())
+                .orgName(org.getName())
+                .roleName(role.getName())
+                .expiresAt(invitation.getExpiresAt())
+                .build();
     }
 }
