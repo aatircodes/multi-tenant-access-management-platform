@@ -5,6 +5,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import saas_access_platform.dto.request.InviteUserRequest;
+import saas_access_platform.dto.response.InvitationLookupResponse;
 import saas_access_platform.dto.response.InvitationResponse;
 import saas_access_platform.dto.response.PendingInvitationResponse;
 import saas_access_platform.service.InvitationService;
@@ -38,5 +39,11 @@ public class InvitationController {
     public ResponseEntity<Void> revokeInvitation(@PathVariable Long invitationId) {
         invitationService.revokeInvitation(invitationId);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{token}")
+    public ResponseEntity<InvitationLookupResponse> getInvitationByToken(
+            @PathVariable String token) {
+        return ResponseEntity.ok(invitationService.getInvitationByToken(token));
     }
 }
