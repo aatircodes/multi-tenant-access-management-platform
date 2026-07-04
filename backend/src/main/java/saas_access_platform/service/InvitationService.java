@@ -14,7 +14,6 @@ import saas_access_platform.repository.RoleRepository;
 import saas_access_platform.repository.UserRepository;
 import saas_access_platform.security.CurrentUserContext;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,8 +37,21 @@ public class InvitationService {
         }
 
         if (invitationRepository.existsByEmailAndOrgIdAndStatus(
-                request.getEmail(), currentUser.getOrgId(), Invitation.InvitationStatus.PENDING)) {
+                request.getEmail(),
+                currentUser.getOrgId(),
+                Invitation.InvitationStatus.PENDING)) {
             throw new IllegalArgumentException("Pending invitation already exists for this email");
+        }
+
+        // Validate that the role exists and belongs to the current organization
+        Role role = roleRepository.findByIdAndOrgId(
+                        request.getRoleId(),
+                        currentUser.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        // Admin role can only be assigned through transferAdmin()
+        if (role.getName().equalsIgnoreCase("admin")) {
+            throw new IllegalArgumentException("Admin role cannot be assigned through invitations");
         }
 
         String token = UUID.randomUUID().toString();
@@ -47,14 +59,18 @@ public class InvitationService {
         Invitation invitation = new Invitation();
         invitation.setOrgId(currentUser.getOrgId());
         invitation.setEmail(request.getEmail());
-        invitation.setRoleId(request.getRoleId());
+        invitation.setRoleId(role.getId());
         invitation.setToken(token);
         invitation.setStatus(Invitation.InvitationStatus.PENDING);
 
         invitationRepository.save(invitation);
 
-        return new InvitationResponse(invitation.getId(), token, request.getEmail(),
-                invitation.getExpiresAt());
+        return new InvitationResponse(
+                invitation.getId(),
+                token,
+                request.getEmail(),
+                invitation.getExpiresAt()
+        );
     }
 
     public List<PendingInvitationResponse> getPendingInvitations() {

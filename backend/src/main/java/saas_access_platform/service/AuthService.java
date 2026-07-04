@@ -13,6 +13,7 @@ import saas_access_platform.entity.Permission;
 import saas_access_platform.entity.Role;
 import saas_access_platform.entity.User;
 import saas_access_platform.entity.UserRole;
+import saas_access_platform.exception.ResourceNotFoundException;
 import saas_access_platform.repository.*;
 import saas_access_platform.security.JwtUtil;
 import saas_access_platform.dto.request.AcceptInvitationRequest;
@@ -156,6 +157,17 @@ public class AuthService {
             throw new InvalidInvitationException("Invitation has expired");
         }
 
+        // Validate that the role still exists and belongs to the organization
+        Role role = roleRepository.findByIdAndOrgId(
+                        invitation.getRoleId(),
+                        invitation.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        // Defense in depth: Admin role can never be assigned through invitations
+        if (role.getName().equalsIgnoreCase("admin")) {
+            throw new IllegalArgumentException("Admin role cannot be assigned through invitations");
+        }
+
         User user = new User();
         user.setOrgId(invitation.getOrgId());
         user.setEmail(invitation.getEmail());
@@ -166,7 +178,7 @@ public class AuthService {
 
         UserRole userRole = new UserRole();
         userRole.setUserId(savedUser.getId());
-        userRole.setRoleId(invitation.getRoleId());
+        userRole.setRoleId(role.getId());
         userRole.setAssignedAt(LocalDateTime.now());
 
         userRoleRepository.save(userRole);
