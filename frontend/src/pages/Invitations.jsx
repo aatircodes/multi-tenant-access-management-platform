@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
-import './Invitations.css';
+import styles from './Invitations.module.css';
 
 function Invitations() {
   const [roles, setRoles] = useState([]);
@@ -54,9 +54,6 @@ function Invitations() {
         email,
         roleId,
       });
-      // Backend only returns id/token/email/expiresAt, not roleName — so we
-      // resolve it locally from the selected role for immediate display,
-      // then refresh from the server to stay in sync with source of truth.
       const selectedRole = roles.find((r) => String(r.id) === String(roleId));
       setInvitations((prev) => [
         {
@@ -65,6 +62,7 @@ function Invitations() {
           roleName: selectedRole?.name || '—',
           status: 'PENDING',
           expiresAt: response.data.expiresAt,
+          token: response.data.token,
         },
         ...prev,
       ]);
@@ -114,22 +112,22 @@ function Invitations() {
   };
 
   return (
-    <div className="app">
+    <div className={styles.app}>
       <Topbar />
-      <div className="layout">
+      <div className={styles.layout}>
         <Sidebar active="invitations" />
-        <div className="content">
-          <div className="content-inner">
-            <div className="page-title">Invitations</div>
-            <div className="page-subtitle">
+        <div className={styles.content}>
+          <div className={styles.contentInner}>
+            <div className={styles.pageTitle}>Invitations</div>
+            <div className={styles.pageSubtitle}>
               Invite new members to your organization and assign their starting role.
             </div>
 
-            {error && <div className="invitations-error">{error}</div>}
+            {error && <div className={styles.invitationsError}>{error}</div>}
 
-            <div className="card invite-card">
-              <form className="invite-row" onSubmit={handleSendInvite}>
-                <div className="field">
+            <div className={`${styles.card} ${styles.inviteCard}`}>
+              <form className={styles.inviteRow} onSubmit={handleSendInvite}>
+                <div className={styles.field}>
                   <label>Email address</label>
                   <input
                     type="email"
@@ -139,7 +137,7 @@ function Invitations() {
                     required
                   />
                 </div>
-                <div className="field field-role">
+                <div className={`${styles.field} ${styles.fieldRole}`}>
                   <label>Role</label>
                   <select value={roleId} onChange={(e) => setRoleId(e.target.value)} required>
                     {roles.map((role) => (
@@ -149,42 +147,44 @@ function Invitations() {
                     ))}
                   </select>
                 </div>
-                <button type="submit" className="btn-primary" disabled={sending || !roleId}>
+                <button type="submit" className={styles.btnPrimary} disabled={sending || !roleId}>
                   {sending ? 'Sending…' : 'Send invite'}
                 </button>
               </form>
-              {sendError && <div className="send-error">{sendError}</div>}
+              {sendError && <div className={styles.sendError}>{sendError}</div>}
             </div>
 
-            <h2>Pending invitations</h2>
+            <div className={styles.sectionLabel}>Pending invitations</div>
             {loading ? (
-              <div className="loading-state">Loading invitations…</div>
+              <div className={styles.loadingState}>Loading invitations…</div>
             ) : invitations.length === 0 ? (
-              <div className="card">
-                <div className="empty-state">No pending invitations.</div>
+              <div className={styles.card}>
+                <div className={styles.emptyState}>No pending invitations.</div>
               </div>
             ) : (
-              <div className="card invite-list">
+              <div className={`${styles.card} ${styles.inviteList}`}>
                 {invitations.map((inv) => (
-                  <div className="invite-list-row" key={inv.id}>
-                    <div className="invite-list-top">
-                      <div className="invite-left">
-                        <div className="invite-email">{inv.email}</div>
-                        <div className="invite-meta">
-                          Invited as <span className="role-tag">{inv.roleName}</span> ·{' '}
+                  <div className={styles.inviteListRow} key={inv.id}>
+                    <div className={styles.inviteListTop}>
+                      <div className={styles.inviteLeft}>
+                        <div className={styles.inviteEmail}>{inv.email}</div>
+                        <div className={styles.inviteMeta}>
+                          Invited as <span className={styles.roleTag}>{inv.roleName}</span> ·{' '}
                           {formatExpiry(inv.expiresAt)}
                         </div>
                       </div>
-                      <div className="invite-right">
-                        <span className="status-badge">Pending</span>
+                      <div className={styles.inviteRight}>
+                        <span className={styles.statusBadge}>Pending</span>
                         <button
-                          className="copy-link-btn"
+                          type="button"
+                          className={styles.copyLinkBtn}
                           onClick={() => toggleLink(inv.id)}
                         >
                           Copy invite link
                         </button>
                         <button
-                          className="revoke-btn"
+                          type="button"
+                          className={styles.revokeBtn}
                           onClick={() => handleRevoke(inv.id)}
                           disabled={revokingId === inv.id}
                         >
@@ -194,20 +194,21 @@ function Invitations() {
                     </div>
                     {visibleLinkId === inv.id && (
                       inv.token ? (
-                        <div className="link-row">
-                          <span className="link-text">
+                        <div className={styles.linkRow}>
+                          <span className={styles.linkText}>
                             {window.location.origin}/accept-invitation?token={inv.token}
                           </span>
                           <button
-                            className={`copy-link-btn ${copiedId === inv.id ? 'copied' : ''}`}
+                            type="button"
+                            className={`${styles.copyLinkBtn} ${copiedId === inv.id ? styles.copyLinkBtnCopied : ''}`}
                             onClick={() => copyLink(inv.id, inv.token)}
                           >
                             {copiedId === inv.id ? 'Copied' : 'Copy'}
                           </button>
                         </div>
                       ) : (
-                        <div className="link-row link-row-notice">
-                          <span className="link-text-notice">
+                        <div className={`${styles.linkRow} ${styles.linkRowNotice}`}>
+                          <span className={styles.linkTextNotice}>
                             Link no longer available for security reasons. Revoke and resend to generate a new one.
                           </span>
                         </div>
