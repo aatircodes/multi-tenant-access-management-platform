@@ -71,6 +71,7 @@ public class AuditAspect {
             case "removePermissionFromRole": return "PERMISSION_REMOVED";
             case "transferAdmin":            return "ADMIN_TRANSFERRED";
             case "deactivateUser":           return "USER_DEACTIVATED";
+            case "revokeInvitation":         return "INVITE_REVOKED";
             default:                         return null;
         }
     }
