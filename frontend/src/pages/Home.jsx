@@ -23,7 +23,9 @@ function Home() {
 
       const orgPromise = axiosClient.get('/organizations/me');
       const usagePromise = axiosClient.get('/usage');
-      const usersPromise = axiosClient.get('/users');
+      const usersPromise = hasPermission('ROLE_READ')
+        ? axiosClient.get('/users')
+        : Promise.resolve(null);
       // Only attempt this call if the user actually holds AUDIT_VIEW — avoids
       // a guaranteed 403 for roles like ReadOnly that don't have it, and lets
       // the rest of the dashboard render normally instead of failing together.
@@ -50,9 +52,9 @@ function Home() {
         errors.usage = 'Failed to load usage data.';
       }
 
-      if (usersRes.status === 'fulfilled') {
+      if (usersRes.status === 'fulfilled' && usersRes.value) {
         setUsers(usersRes.value.data);
-      } else {
+      } else if (usersRes.status === 'rejected') {
         errors.users = 'Failed to load member data.';
       }
 
@@ -196,16 +198,18 @@ function Home() {
                       </div>
                     </div>
                   )}
-                  {sectionErrors.users ? (
-                    <div className="dashboard-error">{sectionErrors.users}</div>
-                  ) : (
-                    <div className="card metric-card">
-                      <div className="metric-top">
-                        <div className="metric-label">Active members</div>
+                  {hasPermission('ROLE_READ') && (
+                    sectionErrors.users ? (
+                      <div className="dashboard-error">{sectionErrors.users}</div>
+                    ) : (
+                      <div className="card metric-card">
+                        <div className="metric-top">
+                          <div className="metric-label">Active members</div>
+                        </div>
+                        <div className="metric-value">{activeMembers}</div>
+                        <div className="bar-sub">Across {distinctRoles.size} roles</div>
                       </div>
-                      <div className="metric-value">{activeMembers}</div>
-                      <div className="bar-sub">Across {distinctRoles.size} roles</div>
-                    </div>
+                    )
                   )}
                 </div>
 

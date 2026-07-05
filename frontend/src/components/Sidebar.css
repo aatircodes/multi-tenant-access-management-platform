@@ -32,3 +32,13 @@
 .nav-item.active:hover {
   background: #EEF0FD;
 }
+
+.nav-item-disabled {
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #C4C4C8;
+  cursor: not-allowed;
+  user-select: none;
+}
