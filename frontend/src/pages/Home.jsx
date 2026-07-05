@@ -120,7 +120,7 @@ function Home() {
                   <div className="org-grid">
                     <div>
                       <div className="org-field-label">Organization slug</div>
-                      <div className="org-field-value mono">{org?.slug}</div>
+                      <div className="org-field-value">{org?.slug}</div>
                     </div>
                     <div>
                       <div className="org-field-label">Created</div>
