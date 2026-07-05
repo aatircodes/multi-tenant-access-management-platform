@@ -29,8 +29,8 @@ function Login() {
       login(response.data.token);
       navigate('/home');
     } catch (err) {
-      if (err.response && err.response.status === 401) {
-        setError('Invalid organization, email, or password.');
+      if (err.response && err.response.status === 400) {
+        setError('Invalid credentials.');
       } else {
         setError('Something went wrong. Please try again.');
       }
