@@ -1,0 +1,82 @@
+.success-card {
+  text-align: center;
+}
+
+.check-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #ECFDF5;
+  border: 1px solid #A7F3D0;
+  color: #047857;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  margin: 0 auto 18px;
+}
+
+.success-card .title {
+  font-size: 19px;
+}
+
+.success-card .subtitle {
+  margin-bottom: 26px;
+  line-height: 1.5;
+}
+
+.slug-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #FAFAFA;
+  border: 1px solid #E4E4E7;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  text-align: left;
+}
+
+.slug-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slug-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #71717A;
+}
+
+.slug-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: #000000;
+}
+
+.copy-btn {
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #E4E4E7;
+  background: #fff;
+  color: #3F3F46;
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  border-color: #4338CA;
+  color: #4338CA;
+}
+
+.reminder {
+  font-size: 12px;
+  color: #71717A;
+  margin-bottom: 24px;
+}
