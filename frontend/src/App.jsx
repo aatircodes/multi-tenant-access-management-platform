@@ -4,6 +4,7 @@ import Register from './pages/Register';
 import RegisterSuccess from './pages/RegisterSuccess';
 import Home from './pages/Home';
 import Invitations from './pages/Invitations';
+import AcceptInvitation from './pages/AcceptInvitation';
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
       <Route path="/register-success" element={<RegisterSuccess />} />
       <Route path="/home" element={<Home />} />
       <Route path="/invitations" element={<Invitations />} />
+      <Route path="/accept-invitation" element={<AcceptInvitation />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
