@@ -50,6 +50,7 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 - Immutable audit logging for all mutations via AOP — no manual logging in service code
 - Per-organization rate limiting using a Redis-backed token bucket, enforced atomically through a Lua script
 - Self-service usage endpoint so any authenticated user can check their organization's remaining quota without consuming it
+- Self-service organization info endpoint so the frontend can display real org metadata (name, slug, creation date) without hardcoding it
 
 ---
 
@@ -569,6 +570,20 @@ who receives the invitation out-of-band and never calls this endpoint at all. Si
 response already includes the far more sensitive `token`, including `id` alongside it exposes
 nothing new to anyone who wasn't already trusted with more.
 
+**Found and fixed via UI review, not testing:** neither `sendInvitation` nor `acceptInvitation`
+originally checked whether the invitation's `roleId` referred to the Admin role. This meant the
+single-Admin invariant enforced everywhere else (`assignRoleToUser`, `transferAdmin`) had a
+completely separate, unguarded bypass — anyone with `USER_INVITE` could invite a new user
+directly into the Admin role, and `acceptInvitation` would honor it without question, producing
+a second Admin and breaking the entire governance model. Fixed with the same defense-in-depth
+pattern used elsewhere: `sendInvitation` now rejects Admin-role invitations at send time, and
+`acceptInvitation` independently re-checks at accept time (covering the edge case where a role
+is renamed to "Admin" after an invitation was already sent but before it was accepted).
+
+`roleId` is rejected with `400` if it refers to the Admin role — found during frontend review as
+a real bypass of the single-admin invariant, since `assignRoleToUser`/`transferAdmin` were
+guarded but the invitation path was not. See Admin Role Governance below.
+
 **GET /api/invitations**
 
 Lists pending invitations for the caller's org.
@@ -650,6 +665,37 @@ A disabled user's credentials still exist but `AuthService.login` rejects them w
 generic `"Invalid credentials"` message used for a wrong password — not a distinct "account
 disabled" message — so a login attempt cannot be used to probe whether a given email
 corresponds to a deactivated account.
+
+---
+
+### Organizations — JWT required
+
+| Method | Endpoint | Permission |
+|---|---|---|
+| GET | /api/organizations/me | Any authenticated user |
+
+**GET /api/organizations/me**
+
+Returns basic metadata about the caller's own organization. Unlike every other endpoint in
+this API, it is gated with `@PreAuthorize("isAuthenticated()")` rather than a specific
+permission code — seeing your own organization's name, slug, and creation date is not an
+administrative concern, it's baseline information every member needs (e.g. to render the
+Home dashboard), so it deliberately does not consume one of the 9 fixed permission codes.
+
+Response `200`:
+```json
+{
+    "name": "Acme Corp",
+    "slug": "acme-corp",
+    "requestLimitPerMinute": 100,
+    "createdAt": "2026-02-12T09:14:03.221"
+}
+```
+
+Added during Phase 6a frontend design review — `Organization.createdAt` existed on the
+entity from Phase 0 but was never exposed through any response (`register-org` returns only
+`orgSlug`, `login` returns JWT claims). The Home screen design needed a real creation date for
+the Organization card, which surfaced the gap.
 
 ---
 
@@ -887,6 +933,15 @@ passing through `GlobalExceptionHandler`.
 
 ---
 
+### Phase 6a continued — Organization Self-Info
+
+| Test | Expected | Result |
+|---|---|---|
+| Get current organization, authenticated | 200 with name, slug, requestLimitPerMinute, createdAt | Passed |
+| Get current organization, no JWT | 401 | Passed |
+
+---
+
 ## Design Decisions
 
 ### Why shared schema over schema-per-tenant?
@@ -1046,6 +1101,37 @@ anyone probing the login endpoint. Returning the identical generic message for b
 closes that side channel, at the minor cost of a slightly less helpful error for the disabled
 user themselves (who would need to contact their org admin regardless).
 
+### Why can an invitation only assign a single role, rather than multiple roles at once?
+
+Onboarding is intentionally limited to exactly one role per invitation, for three reasons.
+First, the Principle of Least Privilege — a new member should start with the minimum access
+their initial role requires, not an accumulated set decided at invite time before they've even
+joined. Second, simplicity — a single `roleId` field on `InviteUserRequest` keeps the invitation
+flow to one clear decision (which role does this person start as), rather than turning
+onboarding into a miniature version of full permission management. Third, separation of
+concerns — invitation is about *bringing someone into the organization*, while assigning
+additional roles is an *ongoing management* action that belongs with the tools already built
+for it. If a member needs more than their starting role, an existing Admin can assign additional
+roles afterward via `POST /api/roles/{roleId}/assign/{userId}` — nothing about single-role
+invitations limits what a user can ultimately hold, it only limits what onboarding itself
+decides on their behalf.
+
+### Why does neither sendInvitation nor acceptInvitation allow the Admin role?
+
+Found and fixed via UI/frontend review, not automated testing: originally, neither endpoint
+checked whether an invitation's `roleId` referred to the Admin role. This meant the single-Admin
+invariant enforced everywhere else (`assignRoleToUser`, `transferAdmin`) had a completely
+separate, unguarded bypass — anyone holding `USER_INVITE` could invite a new user directly into
+the Admin role, and `acceptInvitation` would honor it without question, silently producing a
+second Admin and breaking the entire governance model this platform is built around. Fixed with
+the same defense-in-depth pattern used for Admin-permission immutability: `sendInvitation`
+rejects Admin-role invitations at send time, and `acceptInvitation` independently re-checks at
+accept time — covering the edge case where a role is renamed to "Admin" after an invitation was
+already sent but before it was accepted. This is a good example of why a UI/API-contract review
+pass matters even after a full backend test suite passes — the tests exercised the paths that
+were written, but nobody had tested the *absence* of a guard on a path that was never
+specifically considered.
+
 ### Why does GlobalExceptionHandler implement AuthenticationEntryPoint instead of a lambda in SecurityConfig?
 
 Found and fixed during testing: requests with no JWT at all were returning `403 Forbidden`
@@ -1062,6 +1148,8 @@ required to get a correct 401. Rather than defining that inline in `SecurityConf
 existing 400/403/404/409 handlers) lives in one file, and `SecurityConfig` just wires it in as a
 bean reference with no serialization logic of its own.
 
+### Why are permissions re-checked against the database on every request instead of trusted from the JWT?
+
 JWT's stateless design eliminates the need for a database lookup to establish *identity* —
 signature verification alone confirms who is making the request, without a session-store round
 trip. But permissions are different from identity: they are mutable, revocable authorization
@@ -1074,6 +1162,61 @@ observed directly during testing, where the demoted Admin's still-valid JWT (cla
 fresh from the database on every request rather than trusting the token's embedded claims. This
 makes access revocation immediate rather than dependent on token expiry, which matters more for
 this system's security guarantees than the small cost of one indexed join per request.
+
+### Why does GET /api/organizations/me use isAuthenticated() instead of a permission code?
+
+Every other endpoint in this API is gated by one of the 9 fixed permission codes, resolved
+through `userId -> UserRole -> RolePermission -> permissionCode`. Org name, slug, and creation
+date don't fit that model — they're not an administrative capability being granted or withheld,
+they're baseline context every member of the org needs regardless of role, the same way a
+Slack workspace's name is visible to every member of that workspace, not just admins. Gating it
+behind a permission would mean deliberately choosing which of the 9 codes this unrelated
+concern piggybacks on, weakening the meaning of that code for no real benefit. `isAuthenticated()`
+says precisely what's actually being checked: is this a real, logged-in member of some
+organization, nothing more specific than that.
+
+### Why does the frontend surface the invitation link directly to the admin instead of sending an email?
+
+No email service (SMTP, templating, deliverability) is wired into this project, which is a
+deliberate scope decision consistent with keeping the project defensible in a solo-fresher
+portfolio context rather than replicating every feature of a production SaaS. Since
+`sendInvitation` already returns the token in its response to the inviting admin, the
+Invitations screen surfaces a "Copy invite link" action per pending invitation
+(`{frontend_url}/accept-invitation?token=...`), which the admin shares with the invitee through
+whatever channel is convenient. The accept-invitation flow itself is unaffected by how the
+invitee received the link — the token and `GET /api/invitations/{token}` /
+`POST /api/auth/accept-invitation` endpoints don't know or care whether the link arrived by
+email or was pasted manually. In production, the only change required is triggering an email
+send at the point `sendInvitation` currently returns the token — no change to the accept flow,
+the token model, or any endpoint contract.
+
+### Why did the Transfer Admin action move from the Roles page to the Members page during frontend design?
+
+Originally, Roles → Admin detail included a Transfer Admin panel with its own member dropdown,
+built before a dedicated Members management screen existed. Once Members was designed (to
+support `GET /api/users` and `PATCH /api/users/{userId}/deactivate`), this created a real
+inconsistency: an admin managing a specific person's access would need to remember that most
+person-level actions (viewing status, deactivating) live on Members, but one specific action
+(promoting them to Admin) lived on a completely different page, under Roles. The fix moves
+Transfer Admin onto Members as a per-row action, alongside Deactivate — both are actions
+performed *on a person*, so both live where an admin naturally looks for person-level actions.
+Roles → Admin detail keeps only what's actually about the role itself: its fixed permission
+list, with a short pointer note directing to Members for the transfer action. No backend change
+was needed — `POST /api/roles/transfer-admin/{newUserId}` already accepted a bare path
+parameter with no page-specific dependency.
+
+### Why do Members rows collapse multiple roles into a "+N more" badge instead of listing every role tag?
+
+`UserResponse.roles` is a list — a single user can hold multiple roles simultaneously (e.g. both
+`Editor` and `Auditor`), and nothing in `assignRoleToUser` prevents this. Rendering every role as
+an inline tag works fine for one or two roles but breaks down as the count grows — a member
+holding most of an organization's roles would produce a row several times taller than every
+other row, or a wall of tags wrapping across multiple lines, either of which draws visual
+attention to a data density problem rather than to the person and their access level, which is
+what the row is actually for. The fix shows the first role directly (covering the common
+single-role case with zero extra interaction) and collapses any additional roles behind a
+`+N more` badge that reveals the full list in a small popover on click — every row stays a
+consistent height regardless of how many roles a member holds.
 
 ---
 
@@ -1088,6 +1231,7 @@ this system's security guarantees than the small cost of one indexed join per re
 | 4 | Invitations + Audit Log — invite flow, AuditAspect, audit log endpoint | Complete |
 | 5 | Rate Limiting — Redis, token bucket, atomic Lua script, usage endpoint | Complete |
 | 6a | Backend extensions — admin governance, deactivate-user, pagination, extended endpoints, full test pass (37 tests, 36 passed, 1 not independently testable) | Complete |
+| 6a | Frontend design — 10 screens designed and reviewed against the real API contract (Login, Register + Success, Home, Resources, Roles, Invitations, Members, Accept-Invitation, Audit log) | Complete |
 | 6b | React Frontend — Vite init, Axios client, AuthContext, screens per finalized design system | Not yet started |
 | 7 | Tests — additional coverage as needed once frontend surfaces new edge cases | Pending |
 | 8 | Docker + Deploy — multi-stage Dockerfile, Render/Railway | Pending |
@@ -1099,12 +1243,40 @@ then testing it end-to-end, rather than assuming either was correct):
 - Admin role governance — immutable permissions, single transferable Admin via `POST /api/roles/transfer-admin/{newUserId}`
 - `GET /api/users` and `PATCH /api/users/{userId}/deactivate` — member listing and soft-delete, kept as two independent operations from admin transfer by design
 - `GET /api/invitations` and `DELETE /api/invitations/{invitationId}` — listing and revoking pending invitations
+- `GET /api/organizations/me` — organization self-info (name, slug, requestLimitPerMinute, createdAt), gated by `isAuthenticated()` rather than a permission code
 - `description` field added to `Resource`
 - Pagination added to `GET /api/resources` and `GET /api/audit-logs`
 - Two bugs found and fixed via testing, not by inspection: unauthenticated requests returning
   403 instead of 401 (anonymous auth + missing custom entry point), and `AuditAspect` recording
   `entityId: 0` on all create-style actions (aspect only inspected method arguments, not the
   return value)
+- One additional gap found via UI/frontend review (not automated testing): neither
+  `sendInvitation` nor `acceptInvitation` blocked the Admin role from being assigned through an
+  invitation, bypassing the single-Admin invariant. Fixed with defense-in-depth guards at both
+  send and accept time.
+
+**Frontend design decisions made during Phase 6a** (see [Design Decisions](#design-decisions)
+for full detail):
+
+- Single React app with permission-driven conditional rendering, not a separate admin/user
+  module split — nav items and actions show or hide based on the logged-in user's permission
+  set, the same live-checked model the backend already enforces
+- Transfer Admin relocated from Roles → Admin detail onto the Members page, alongside
+  Deactivate, so all person-level actions live in one place
+- Members screen handles multi-role users with a "+N more" overflow pattern rather than an
+  unbounded row of tags
+- Invitation token delivery handled via a "Copy invite link" action in the admin's Invitations
+  view rather than email, since no email service is part of this project's scope — the accept
+  flow itself is unaffected by how the link reaches the invitee, so swapping in real email
+  delivery later requires no change to the token model or any endpoint
+
+**Known small cleanup items, deferred to Phase 6b (no backend changes required):**
+
+- Login screen's non-functional "Forgot password?" link — to be removed
+- "Roles" nav/page label — to be renamed to "Roles & Permissions" across all screens
+- Home's Organization card and Recent Activity feed — currently mocked with placeholder data in
+  the static design; wired to `GET /api/organizations/me` and `GET /api/audit-logs` respectively
+  once the React build reaches Home
 
 ---
 
