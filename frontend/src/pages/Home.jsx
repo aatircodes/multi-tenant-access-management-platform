@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { AuthContext } from '../context/AuthContext';
@@ -13,6 +13,7 @@ function Home() {
   const [users, setUsers] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshingUsage, setRefreshingUsage] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -37,6 +38,18 @@ function Home() {
       }
     }
     loadDashboard();
+  }, []);
+
+  const refreshUsage = useCallback(async () => {
+    setRefreshingUsage(true);
+    try {
+      const usageRes = await axiosClient.get('/usage');
+      setUsage(usageRes.data);
+    } catch (err) {
+      // Silently ignore; the existing usage numbers just stay stale on failure
+    } finally {
+      setRefreshingUsage(false);
+    }
   }, []);
 
   // Build userId -> email lookup for displaying audit log actors
@@ -117,6 +130,10 @@ function Home() {
                       <div className="org-field-label">Your role</div>
                       <div className="org-field-value">{currentRole}</div>
                     </div>
+                    <div>
+                      <div className="org-field-label">Rate limit</div>
+                      <div className="org-field-value">{org?.requestLimitPerMinute} req/min</div>
+                    </div>
                   </div>
                 </div>
 
@@ -125,6 +142,13 @@ function Home() {
                   <div className="card metric-card">
                     <div className="metric-top">
                       <div className="metric-label">Tokens remaining (org-wide)</div>
+                      <button
+                        className="refresh-btn"
+                        onClick={refreshUsage}
+                        disabled={refreshingUsage}
+                      >
+                        {refreshingUsage ? 'Refreshing…' : 'Refresh'}
+                      </button>
                     </div>
                     <div className="metric-value">
                       {Math.round(usage?.tokensRemaining ?? 0)}
