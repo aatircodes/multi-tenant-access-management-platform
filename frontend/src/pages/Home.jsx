@@ -68,7 +68,9 @@ function Home() {
 
   const refillPerSecond = usage ? (usage.limitPerMinute / 60).toFixed(2) : '—';
 
-  const orgFirstName = claims?.sub ? claims.sub.split('@')[0] : 'there';
+  const orgFirstName = claims?.sub
+  ? claims.sub.split('@')[0].charAt(0).toUpperCase() + claims.sub.split('@')[0].slice(1)
+  : 'there';
   const currentRole = claims?.roles?.[0] || '—';
 
   const formatDate = (isoString) => {
