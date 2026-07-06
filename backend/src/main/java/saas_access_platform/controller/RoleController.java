@@ -40,6 +40,15 @@ public class RoleController {
         return ResponseEntity.noContent().build();
     }
 
+    @DeleteMapping("/{roleId}/unassign/{userId}")
+    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    public ResponseEntity<Void> unassignRoleFromUser(
+            @PathVariable Long roleId,
+            @PathVariable Long userId) {
+        roleService.unassignRoleFromUser(roleId, userId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/{roleId}/permissions/{permissionId}")
     @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
     public ResponseEntity<Void> assignPermissionToRole(

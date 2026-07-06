@@ -87,6 +87,36 @@ public class RoleService {
         userRoleRepository.save(userRole);
     }
 
+    @Transactional
+    public void unassignRoleFromUser(Long roleId, Long userId) {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Long orgId = currentUser.getOrgId();
+
+        Role role = roleRepository.findByIdAndOrgId(roleId, orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        if (role.getName().equalsIgnoreCase("Admin")) {
+            throw new RuntimeException("Admin role cannot be removed directly — use transfer-admin instead");
+        }
+
+        User user = userRepository.findByIdAndOrgId(userId, orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        if (!userRoleRepository.existsByUserIdAndRoleId(user.getId(), role.getId())) {
+            throw new ResourceNotFoundException("User does not have this role");
+        }
+
+        // Every user must retain at least one role — if this is their last one,
+        // reject the removal rather than leaving them with zero roles.
+        long currentRoleCount = userRoleRepository.countByUserId(user.getId());
+        if (currentRoleCount <= 1) {
+            throw new RuntimeException("A user must have at least one role assigned");
+        }
+
+        userRoleRepository.deleteByUserIdAndRoleId(user.getId(), role.getId());
+    }
+
     public void assignPermissionToRole(Long roleId, Long permissionId) {
         CurrentUserContext currentUser = (CurrentUserContext)
                 SecurityContextHolder.getContext().getAuthentication().getPrincipal();
@@ -140,6 +170,7 @@ public class RoleService {
                 .toList();
     }
 
+    @Transactional
     public void removePermissionFromRole(Long roleId, Long permissionId) {
         CurrentUserContext currentUser = (CurrentUserContext)
                 SecurityContextHolder.getContext().getAuthentication().getPrincipal();
@@ -157,6 +188,13 @@ public class RoleService {
         // Prevent removing a permission that was never assigned
         if (!rolePermissionRepository.existsByRoleIdAndPermissionId(role.getId(), permission.getId())) {
             throw new ResourceNotFoundException("Permission not assigned to this role");
+        }
+
+        // Every role must retain at least one permission — if this is the last one,
+        // the correct action is deleting the role itself, not leaving it empty.
+        long currentPermissionCount = rolePermissionRepository.findAllByRoleId(role.getId()).size();
+        if (currentPermissionCount <= 1) {
+            throw new RuntimeException("A role must have at least one permission — delete the role instead of removing its last permission");
         }
 
         rolePermissionRepository.deleteByRoleIdAndPermissionId(role.getId(), permission.getId());
