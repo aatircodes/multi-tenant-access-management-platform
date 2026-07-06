@@ -6,6 +6,8 @@ import Home from './pages/Home';
 import Invitations from './pages/Invitations';
 import AcceptInvitation from './pages/AcceptInvitation';
 import Members from './pages/Members';
+import RolesList from './pages/RolesList';
+import RoleDetail from './pages/RoleDetail';
 
 function App() {
   return (
@@ -18,6 +20,8 @@ function App() {
       <Route path="/accept-invitation" element={<AcceptInvitation />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
       <Route path="/members" element={<Members />} />
+      <Route path="/roles" element={<RolesList />} />
+      <Route path="/roles/:roleId" element={<RoleDetail />} />
     </Routes>
   );
 }
