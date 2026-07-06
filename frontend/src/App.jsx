@@ -5,6 +5,7 @@ import RegisterSuccess from './pages/RegisterSuccess';
 import Home from './pages/Home';
 import Invitations from './pages/Invitations';
 import AcceptInvitation from './pages/AcceptInvitation';
+import Members from './pages/Members';
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
       <Route path="/invitations" element={<Invitations />} />
       <Route path="/accept-invitation" element={<AcceptInvitation />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="/members" element={<Members />} />
     </Routes>
   );
 }
