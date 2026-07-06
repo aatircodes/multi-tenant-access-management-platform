@@ -7,9 +7,9 @@ import saas_access_platform.entity.RolePermission;
 import java.util.List;
 
 public interface RolePermissionRepository extends JpaRepository<RolePermission, Long> {
-
     List<RolePermission> findAllByRoleId(Long roleId);
     void deleteByRoleIdAndPermissionId(Long roleId, Long permissionId);
+    void deleteAllByRoleId(Long roleId);
     boolean existsByRoleIdAndPermissionId(Long roleId, Long permissionId);
 
     @Query("SELECT COUNT(rp) > 0 FROM RolePermission rp " +

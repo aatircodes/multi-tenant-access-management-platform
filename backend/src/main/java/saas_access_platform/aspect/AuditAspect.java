@@ -66,7 +66,9 @@ public class AuditAspect {
             case "updateResource":           return "RESOURCE_UPDATED";
             case "deleteResource":           return "RESOURCE_DELETED";
             case "createRole":               return "ROLE_CREATED";
+            case "deleteRole":               return "ROLE_DELETED";
             case "assignRoleToUser":         return "ROLE_ASSIGNED";
+            case "unassignRoleFromUser":     return "ROLE_UNASSIGNED";
             case "assignPermissionToRole":   return "PERMISSION_ASSIGNED";
             case "removePermissionFromRole": return "PERMISSION_REMOVED";
             case "transferAdmin":            return "ADMIN_TRANSFERRED";

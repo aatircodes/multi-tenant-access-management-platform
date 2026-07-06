@@ -234,4 +234,26 @@ public class RoleService {
             userRoleRepository.save(newAdminUserRole);
         }
     }
+
+    @Transactional
+    public void deleteRole(Long roleId) {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+
+        if (role.getName().equalsIgnoreCase("Admin")) {
+            throw new RuntimeException("Admin role cannot be deleted");
+        }
+
+        long memberCount = userRoleRepository.countByRoleId(role.getId());
+        if (memberCount > 0) {
+            throw new RuntimeException("Cannot delete a role that's still assigned to members — unassign them first");
+        }
+
+        // Remove permission mappings first to avoid a foreign-key conflict, then the role itself
+        rolePermissionRepository.deleteAllByRoleId(role.getId());
+        roleRepository.delete(role);
+    }
 }

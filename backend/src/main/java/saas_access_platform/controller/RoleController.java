@@ -79,4 +79,11 @@ public class RoleController {
         roleService.transferAdmin(newUserId);
         return ResponseEntity.noContent().build();
     }
+
+    @DeleteMapping("/{roleId}")
+    @PreAuthorize("hasPermission(null, 'ROLE_CREATE')")
+    public ResponseEntity<Void> deleteRole(@PathVariable Long roleId) {
+        roleService.deleteRole(roleId);
+        return ResponseEntity.noContent().build();
+    }
 }
