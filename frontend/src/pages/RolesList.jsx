@@ -26,8 +26,13 @@ function RolesList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Authoritative code -> id map, resolved from the Admin role (which always holds all 9
+  // permissions), so the create-role flow can call the assign endpoint correctly.
+  const [permissionIdByCode, setPermissionIdByCode] = useState({});
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newRoleName, setNewRoleName] = useState('');
+  const [selectedCodes, setSelectedCodes] = useState(new Set());
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -35,8 +40,18 @@ function RolesList() {
     setLoading(true);
     setError('');
     try {
-      const res = await axiosClient.get('/roles');
-      setRoles(res.data);
+      const rolesRes = await axiosClient.get('/roles');
+      setRoles(rolesRes.data);
+
+      const adminRole = rolesRes.data.find((r) => r.name === 'Admin');
+      if (adminRole) {
+        const adminPermsRes = await axiosClient.get(`/roles/${adminRole.id}/permissions`);
+        const idMap = {};
+        adminPermsRes.data.forEach((p) => {
+          idMap[p.code] = p.id;
+        });
+        setPermissionIdByCode(idMap);
+      }
     } catch (err) {
       setError('Failed to load roles.');
     } finally {
@@ -48,20 +63,55 @@ function RolesList() {
     loadRoles();
   }, []);
 
+  const togglePermission = (code) => {
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) {
+        next.delete(code);
+      } else {
+        next.add(code);
+      }
+      return next;
+    });
+  };
+
+  const openCreateModal = () => {
+    setNewRoleName('');
+    setSelectedCodes(new Set());
+    setCreateError('');
+    setShowCreateModal(true);
+  };
+
   const handleCreateRole = async (e) => {
     e.preventDefault();
     setCreateError('');
     setCreating(true);
     try {
-      await axiosClient.post('/roles', { name: newRoleName });
+      const createRes = await axiosClient.post('/roles', { name: newRoleName });
+      const newRoleId = createRes.data.id;
+
+      // Assign each selected permission in sequence. If one fails partway through, the role
+      // still exists with whichever permissions succeeded — surfaced via the error message
+      // below rather than silently losing track of a partial result.
+      const codesToAssign = Array.from(selectedCodes);
+      for (const code of codesToAssign) {
+        const permissionId = permissionIdByCode[code];
+        if (permissionId) {
+          await axiosClient.post(`/roles/${newRoleId}/permissions/${permissionId}`);
+        }
+      }
+
       setShowCreateModal(false);
       setNewRoleName('');
+      setSelectedCodes(new Set());
       await loadRoles();
     } catch (err) {
       if (err.response && err.response.status === 409) {
         setCreateError('A role with this name already exists.');
       } else {
-        setCreateError('Failed to create role. Please try again.');
+        setCreateError(
+          'Role created, but one or more permissions failed to assign. Open the role to finish configuring it.'
+        );
       }
     } finally {
       setCreating(false);
@@ -83,11 +133,7 @@ function RolesList() {
                 </div>
               </div>
               {hasPermission('ROLE_CREATE') && (
-                <button
-                  type="button"
-                  className={styles.btnPrimary}
-                  onClick={() => setShowCreateModal(true)}
-                >
+                <button type="button" className={styles.btnPrimary} onClick={openCreateModal}>
                   + New role
                 </button>
               )}
@@ -102,11 +148,7 @@ function RolesList() {
                 {roles.map((role) => {
                   const isAdmin = role.name === 'Admin';
                   return (
-                    <Link
-                      to={`/roles/${role.id}`}
-                      className={styles.roleRow}
-                      key={role.id}
-                    >
+                    <Link to={`/roles/${role.id}`} className={styles.roleRow} key={role.id}>
                       <div className={styles.roleLeft}>
                         <div className={styles.roleName}>
                           {role.name}
@@ -130,7 +172,10 @@ function RolesList() {
 
       {showCreateModal && (
         <div className={styles.modalOverlay} onClick={() => setShowCreateModal(false)}>
-          <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+          <div
+            className={`${styles.modalCard} ${styles.modalCardWide}`}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className={styles.modalTitle}>New role</div>
             <form onSubmit={handleCreateRole}>
               <div className={styles.field}>
@@ -144,7 +189,31 @@ function RolesList() {
                   autoFocus
                 />
               </div>
+
+              <div className={styles.sectionLabel}>
+                Permissions <span style={{ fontWeight: 400, color: '#B45309' }}>— select at least one</span>
+              </div>
+              <div className={styles.permList}>
+                {ALL_PERMISSIONS.map((permission) => (
+                  <div className={styles.permRow} key={permission.code}>
+                    <div className={styles.permLeft}>
+                      <div className={styles.permCode}>{permission.code}</div>
+                      <div className={styles.permDesc}>{permission.description}</div>
+                    </div>
+                    <label className={styles.switch}>
+                      <input
+                        type="checkbox"
+                        checked={selectedCodes.has(permission.code)}
+                        onChange={() => togglePermission(permission.code)}
+                      />
+                      <span className={styles.slider}></span>
+                    </label>
+                  </div>
+                ))}
+              </div>
+
               {createError && <div className={styles.modalError}>{createError}</div>}
+
               <div className={styles.modalActions}>
                 <button
                   type="button"
@@ -153,8 +222,13 @@ function RolesList() {
                 >
                   Cancel
                 </button>
-                <button type="submit" className={styles.btnPrimary} disabled={creating}>
-                  {creating ? 'Creating…' : 'Create'}
+                <button
+                  type="submit"
+                  className={styles.btnPrimary}
+                  disabled={creating || selectedCodes.size === 0}
+                  title={selectedCodes.size === 0 ? 'Select at least one permission' : ''}
+                >
+                  {creating ? 'Creating…' : 'Create role'}
                 </button>
               </div>
             </form>
