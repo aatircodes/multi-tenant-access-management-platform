@@ -1,4 +1,5 @@
 import { useState, useEffect, useContext } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { AuthContext } from '../context/AuthContext';
 import Sidebar from '../components/Sidebar';
@@ -6,17 +7,24 @@ import Topbar from '../components/Topbar';
 import styles from './Members.module.css';
 
 function Members() {
-  const { claims } = useContext(AuthContext);
+  const { claims, logout, hasPermission } = useContext(AuthContext);
+  const navigate = useNavigate();
   const currentUserId = claims?.userId;
 
+  const canAssignRole = hasPermission('ROLE_ASSIGN');
+  const canDeactivate = hasPermission('USER_INVITE');
+
   const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [openPopoverId, setOpenPopoverId] = useState(null);
 
-  const [modalType, setModalType] = useState(null); // 'deactivate' | 'transfer' | null
+  const [modalType, setModalType] = useState(null); // 'deactivate' | 'transfer' | 'assign' | 'unassign' | null
   const [modalTarget, setModalTarget] = useState(null); // the user object
+  const [modalRole, setModalRole] = useState(null); // { id, name } — only used for unassign
+  const [selectedRoleId, setSelectedRoleId] = useState('');
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
 
@@ -24,8 +32,12 @@ function Members() {
     setLoading(true);
     setError('');
     try {
-      const res = await axiosClient.get('/users');
-      setUsers(res.data);
+      const [usersRes, rolesRes] = await Promise.all([
+        axiosClient.get('/users'),
+        axiosClient.get('/roles'),
+      ]);
+      setUsers(usersRes.data);
+      setRoles(rolesRes.data);
     } catch (err) {
       setError('Failed to load members.');
     } finally {
@@ -48,16 +60,20 @@ function Members() {
     setOpenPopoverId((prev) => (prev === userId ? null : userId));
   };
 
-  const openModal = (type, user) => {
+  const openModal = (type, user, role = null) => {
     setModalType(type);
     setModalTarget(user);
+    setModalRole(role);
     setModalError('');
+    setSelectedRoleId('');
   };
 
   const closeModal = () => {
     setModalType(null);
     setModalTarget(null);
+    setModalRole(null);
     setModalError('');
+    setSelectedRoleId('');
   };
 
   const confirmModalAction = async () => {
@@ -67,11 +83,25 @@ function Members() {
     try {
       if (modalType === 'deactivate') {
         await axiosClient.patch(`/users/${modalTarget.id}/deactivate`);
+        closeModal();
+        await loadUsers();
       } else if (modalType === 'transfer') {
         await axiosClient.post(`/roles/transfer-admin/${modalTarget.id}`);
+        // The caller's own permission set just changed (they gave up Admin). Their existing
+        // JWT still claims the old role, so continuing to use it would cause every subsequent
+        // permission check to be silently wrong. Force a clean re-login instead.
+        logout();
+        navigate('/login');
+        return;
+      } else if (modalType === 'assign') {
+        await axiosClient.post(`/roles/${selectedRoleId}/assign/${modalTarget.id}`);
+        closeModal();
+        await loadUsers();
+      } else if (modalType === 'unassign') {
+        await axiosClient.delete(`/roles/${modalRole.id}/unassign/${modalTarget.id}`);
+        closeModal();
+        await loadUsers();
       }
-      closeModal();
-      await loadUsers();
     } catch (err) {
       const backendMessage = err.response?.data?.message;
       setModalError(backendMessage || 'Action failed. Please try again.');
@@ -87,6 +117,14 @@ function Members() {
       day: 'numeric',
       year: 'numeric',
     });
+  };
+
+  const handleRemoveTagClick = (e, user, roleName) => {
+    e.stopPropagation();
+    const role = roles.find((r) => r.name === roleName);
+    if (role) {
+      openModal('unassign', user, { id: role.id, name: role.name });
+    }
   };
 
   return (
@@ -126,12 +164,78 @@ function Members() {
                       const isDisabled = user.status === 'DISABLED';
                       const isAdmin = user.roles.includes('Admin');
                       const [firstRole, ...restRoles] = user.roles;
+                      const onlyOneRole = user.roles.length <= 1;
 
-                      const actionsDisabled = isSelf || isDisabled || isAdmin;
-                      let disabledReason = '';
-                      if (isSelf) disabledReason = 'You cannot modify your own account';
-                      else if (isDisabled) disabledReason = 'This member is deactivated';
-                      else if (isAdmin) disabledReason = 'This member is already the Admin';
+                      // Base conditions that apply regardless of permission —
+                      // these describe *why an action never makes sense here*,
+                      // independent of what the current viewer is allowed to do.
+                      const baseDisabled = isSelf || isDisabled || isAdmin;
+                      let baseDisabledReason = '';
+                      if (isSelf) baseDisabledReason = 'You cannot modify your own account';
+                      else if (isDisabled) baseDisabledReason = 'This member is deactivated';
+                      else if (isAdmin) baseDisabledReason = 'This member is already the Admin';
+
+                      // Assign role — gated on ROLE_ASSIGN (matches
+                      // POST /roles/{roleId}/assign/{userId} on the backend)
+                      const assignRoleBaseDisabled = isSelf || isDisabled;
+                      const assignRoleDisabled = assignRoleBaseDisabled || !canAssignRole;
+                      let assignRoleReason = '';
+                      if (isSelf) assignRoleReason = 'You cannot modify your own account';
+                      else if (isDisabled) assignRoleReason = 'This member is deactivated';
+                      else if (!canAssignRole) assignRoleReason = 'You do not have permission to assign roles';
+
+                      // Make Admin (transfer-admin) — gated on ROLE_ASSIGN (matches
+                      // POST /roles/transfer-admin/{newUserId} on the backend)
+                      const transferDisabled = baseDisabled || !canAssignRole;
+                      let transferReason = baseDisabledReason;
+                      if (!baseDisabled && !canAssignRole) {
+                        transferReason = 'You do not have permission to transfer admin rights';
+                      }
+
+                      // Deactivate — gated on USER_INVITE (matches
+                      // PATCH /users/{userId}/deactivate on the backend)
+                      const deactivateDisabled = baseDisabled || !canDeactivate;
+                      let deactivateReason = baseDisabledReason;
+                      if (!baseDisabled && !canDeactivate) {
+                        deactivateReason = 'You do not have permission to deactivate members';
+                      }
+
+                      const renderRoleTag = (roleName, isPopoverTag) => {
+                        const isAdminTag = roleName === 'Admin';
+                        // Unassign calls DELETE /roles/{roleId}/unassign/{userId},
+                        // which is also gated on ROLE_ASSIGN on the backend.
+                        const canRemove =
+                          !isAdminTag && !onlyOneRole && !isDisabled && canAssignRole;
+                        return (
+                          <span
+                            key={roleName}
+                            className={`${styles.roleTag} ${isAdminTag ? styles.roleTagAdmin : ''} ${
+                              canRemove ? styles.roleTagRemovable : ''
+                            }`}
+                            title={
+                              isAdminTag
+                                ? 'Admin is transferred, not removed'
+                                : onlyOneRole
+                                ? 'User must have at least one role'
+                                : !canAssignRole
+                                ? 'You do not have permission to unassign roles'
+                                : ''
+                            }
+                          >
+                            {roleName}
+                            {canRemove && (
+                              <button
+                                type="button"
+                                className={styles.roleTagRemoveBtn}
+                                onClick={(e) => handleRemoveTagClick(e, user, roleName)}
+                                aria-label={`Unassign ${roleName} role`}
+                              >
+                                Unassign
+                              </button>
+                            )}
+                          </span>
+                        );
+                      };
 
                       return (
                         <tr key={user.id} className={isDisabled ? styles.disabledRow : ''}>
@@ -145,9 +249,7 @@ function Members() {
                           </td>
                           <td>
                             <div className={styles.roleTags}>
-                              <span className={`${styles.roleTag} ${firstRole === 'Admin' ? styles.roleTagAdmin : ''}`}>
-                                {firstRole}
-                              </span>
+                              {renderRoleTag(firstRole, false)}
                               {restRoles.length > 0 && (
                                 <button
                                   type="button"
@@ -157,11 +259,7 @@ function Members() {
                                   +{restRoles.length} more
                                   {openPopoverId === user.id && (
                                     <div className={`${styles.roleMorePopover} ${styles.roleMorePopoverOpen}`}>
-                                      {restRoles.map((role) => (
-                                        <span key={role} className={styles.roleTag}>
-                                          {role}
-                                        </span>
-                                      ))}
+                                      {restRoles.map((role) => renderRoleTag(role, true))}
                                     </div>
                                   )}
                                 </button>
@@ -182,8 +280,17 @@ function Members() {
                               <button
                                 type="button"
                                 className={styles.iconBtn}
-                                disabled={actionsDisabled}
-                                title={disabledReason}
+                                disabled={assignRoleDisabled}
+                                title={assignRoleReason}
+                                onClick={() => openModal('assign', user)}
+                              >
+                                Assign role
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.iconBtn}
+                                disabled={transferDisabled}
+                                title={transferReason}
                                 onClick={() => openModal('transfer', user)}
                               >
                                 Make Admin
@@ -191,8 +298,8 @@ function Members() {
                               <button
                                 type="button"
                                 className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
-                                disabled={actionsDisabled}
-                                title={disabledReason}
+                                disabled={deactivateDisabled}
+                                title={deactivateReason}
                                 onClick={() => openModal('deactivate', user)}
                               >
                                 Deactivate
@@ -213,7 +320,7 @@ function Members() {
       {modalType && modalTarget && (
         <div className={styles.modalOverlay} onClick={closeModal}>
           <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-            {modalType === 'deactivate' ? (
+            {modalType === 'deactivate' && (
               <>
                 <div className={styles.modalTitle}>Deactivate member</div>
                 <div className={styles.modalBody}>
@@ -221,12 +328,52 @@ function Members() {
                   will lose access immediately.
                 </div>
               </>
-            ) : (
+            )}
+
+            {modalType === 'transfer' && (
               <>
                 <div className={styles.modalTitle}>Transfer admin rights</div>
                 <div className={styles.modalBody}>
                   Make <strong>{modalTarget.email}</strong> the new Admin? You will lose Admin
                   access immediately. There can only be one Admin per organization.
+                </div>
+              </>
+            )}
+
+            {modalType === 'assign' && (
+              <>
+                <div className={styles.modalTitle}>Assign role</div>
+                <div className={styles.modalBody}>
+                  Add an additional role to <strong>{modalTarget.email}</strong>. Roles they
+                  already hold are not shown below.
+                </div>
+                <div className={styles.field}>
+                  <label>Role</label>
+                  <select
+                    value={selectedRoleId}
+                    onChange={(e) => setSelectedRoleId(e.target.value)}
+                    className={styles.roleSelect}
+                  >
+                    <option value="">Select a role…</option>
+                    {roles
+                      .filter((r) => r.name !== 'Admin' && !modalTarget.roles.includes(r.name))
+                      .map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {modalType === 'unassign' && modalRole && (
+              <>
+                <div className={styles.modalTitle}>Remove role</div>
+                <div className={styles.modalBody}>
+                  Remove <strong>{modalRole.name}</strong> from <strong>{modalTarget.email}</strong>?
+                  They will lose whichever permissions this role granted, unless another one of
+                  their roles also grants them.
                 </div>
               </>
             )}
@@ -237,7 +384,7 @@ function Members() {
               <button type="button" className={styles.btnSecondary} onClick={closeModal}>
                 Cancel
               </button>
-              {modalType === 'deactivate' ? (
+              {modalType === 'deactivate' && (
                 <button
                   type="button"
                   className={styles.btnDanger}
@@ -246,7 +393,8 @@ function Members() {
                 >
                   {modalSubmitting ? 'Deactivating…' : 'Deactivate'}
                 </button>
-              ) : (
+              )}
+              {modalType === 'transfer' && (
                 <button
                   type="button"
                   className={styles.btnAccent}
@@ -254,6 +402,26 @@ function Members() {
                   disabled={modalSubmitting}
                 >
                   {modalSubmitting ? 'Transferring…' : 'Transfer Admin'}
+                </button>
+              )}
+              {modalType === 'assign' && (
+                <button
+                  type="button"
+                  className={styles.btnAccent}
+                  onClick={confirmModalAction}
+                  disabled={modalSubmitting || !selectedRoleId}
+                >
+                  {modalSubmitting ? 'Assigning…' : 'Assign'}
+                </button>
+              )}
+              {modalType === 'unassign' && (
+                <button
+                  type="button"
+                  className={styles.btnDanger}
+                  onClick={confirmModalAction}
+                  disabled={modalSubmitting}
+                >
+                  {modalSubmitting ? 'Removing…' : 'Remove role'}
                 </button>
               )}
             </div>
