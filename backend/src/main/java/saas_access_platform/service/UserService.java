@@ -4,12 +4,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import saas_access_platform.dto.response.UserResponse;
+import saas_access_platform.entity.Permission;
 import saas_access_platform.entity.Role;
 import saas_access_platform.entity.User;
 import saas_access_platform.exception.ResourceNotFoundException;
-import saas_access_platform.repository.RoleRepository;
-import saas_access_platform.repository.UserRepository;
-import saas_access_platform.repository.UserRoleRepository;
+import saas_access_platform.repository.*;
 import saas_access_platform.security.CurrentUserContext;
 
 import java.util.List;
@@ -21,6 +20,30 @@ public class UserService {
     private final UserRepository userRepository;
     private final UserRoleRepository userRoleRepository;
     private final RoleRepository roleRepository;
+    private final RolePermissionRepository rolePermissionRepository;
+    private final PermissionRepository permissionRepository;
+
+    public List<String> getCurrentUserPermissions() {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        List<Long> roleIds = userRoleRepository.findRoleIdsByUserId(currentUser.getUserId());
+
+        if (roleIds.isEmpty()) {
+            return List.of();
+        }
+
+        java.util.Set<Long> mergedPermissionIds = new java.util.HashSet<>();
+        for (Long roleId : roleIds) {
+            rolePermissionRepository.findAllByRoleId(roleId)
+                    .forEach(rp -> mergedPermissionIds.add(rp.getPermissionId()));
+        }
+
+        return permissionRepository.findAllById(mergedPermissionIds)
+                .stream()
+                .map(Permission::getCode)
+                .toList();
+    }
 
     public List<UserResponse> getAllUsers() {
         CurrentUserContext currentUser = (CurrentUserContext)

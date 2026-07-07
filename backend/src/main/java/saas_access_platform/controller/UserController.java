@@ -16,6 +16,11 @@ public class UserController {
 
     private final UserService userService;
 
+    @GetMapping("/permissions")
+    public ResponseEntity<List<String>> getMyPermissions() {
+        return ResponseEntity.ok(userService.getCurrentUserPermissions());
+    }
+
     @GetMapping
     @PreAuthorize("hasPermission(null, 'ROLE_READ')")
     public ResponseEntity<List<UserResponse>> getAllUsers() {
