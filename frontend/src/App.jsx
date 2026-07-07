@@ -8,6 +8,8 @@ import AcceptInvitation from './pages/AcceptInvitation';
 import Members from './pages/Members';
 import RolesList from './pages/RolesList';
 import RoleDetail from './pages/RoleDetail';
+import Resources from './pages/Resources';
+import AuditLog from './pages/AuditLog';
 
 function App() {
   return (
@@ -18,10 +20,12 @@ function App() {
       <Route path="/home" element={<Home />} />
       <Route path="/invitations" element={<Invitations />} />
       <Route path="/accept-invitation" element={<AcceptInvitation />} />
-      <Route path="*" element={<Navigate to="/login" replace />} />
       <Route path="/members" element={<Members />} />
       <Route path="/roles" element={<RolesList />} />
       <Route path="/roles/:roleId" element={<RoleDetail />} />
+      <Route path="/resources" element={<Resources />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="/audit-log" element={<AuditLog />} />
     </Routes>
   );
 }
