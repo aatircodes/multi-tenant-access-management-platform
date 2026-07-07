@@ -3,6 +3,7 @@ package saas_access_platform.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import saas_access_platform.dto.response.BasicUserResponse;
 import saas_access_platform.dto.response.UserResponse;
 import saas_access_platform.entity.Permission;
 import saas_access_platform.entity.Role;
@@ -93,5 +94,18 @@ public class UserService {
 
         targetUser.setStatus(User.UserStatus.DISABLED);
         userRepository.save(targetUser);
+    }
+
+    public List<BasicUserResponse> getBasicUserInfo() {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        return userRepository.findAllByOrgId(currentUser.getOrgId())
+                .stream()
+                .map(user -> BasicUserResponse.builder()
+                        .id(user.getId())
+                        .email(user.getEmail())
+                        .build())
+                .toList();
     }
 }
