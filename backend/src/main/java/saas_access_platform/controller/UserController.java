@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import saas_access_platform.dto.response.BasicUserResponse;
 import saas_access_platform.dto.response.UserResponse;
 import saas_access_platform.service.UserService;
 
@@ -16,7 +17,7 @@ public class UserController {
 
     private final UserService userService;
 
-    @GetMapping("/permissions")
+    @GetMapping("/me-permissions")
     public ResponseEntity<List<String>> getMyPermissions() {
         return ResponseEntity.ok(userService.getCurrentUserPermissions());
     }
@@ -32,5 +33,10 @@ public class UserController {
     public ResponseEntity<Void> deactivateUser(@PathVariable Long userId) {
         userService.deactivateUser(userId);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/basic-info")
+    public ResponseEntity<List<BasicUserResponse>> getBasicUserInfo() {
+        return ResponseEntity.ok(userService.getBasicUserInfo());
     }
 }
