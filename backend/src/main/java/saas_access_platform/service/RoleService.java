@@ -190,13 +190,6 @@ public class RoleService {
             throw new ResourceNotFoundException("Permission not assigned to this role");
         }
 
-        // Every role must retain at least one permission — if this is the last one,
-        // the correct action is deleting the role itself, not leaving it empty.
-        long currentPermissionCount = rolePermissionRepository.findAllByRoleId(role.getId()).size();
-        if (currentPermissionCount <= 1) {
-            throw new RuntimeException("A role must have at least one permission — delete the role instead of removing its last permission");
-        }
-
         rolePermissionRepository.deleteByRoleIdAndPermissionId(role.getId(), permission.getId());
     }
 
