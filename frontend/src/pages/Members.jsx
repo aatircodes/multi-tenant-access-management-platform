@@ -11,8 +11,19 @@ function Members() {
   const navigate = useNavigate();
   const currentUserId = claims?.userId;
 
-  const canAssignRole = hasPermission('ROLE_ASSIGN');
-  const canDeactivate = hasPermission('USER_INVITE');
+  // Assign/unassign role — POST /roles/{roleId}/assign/{userId} and
+  // DELETE /roles/{roleId}/unassign/{userId} are both gated on ROLE_MANAGE
+  // (renamed from ROLE_ASSIGN).
+  const canAssignRole = hasPermission('ROLE_MANAGE');
+  // Transfer admin — POST /roles/transfer-admin/{newUserId} is gated on its
+  // own ADMIN_TRANSFER permission, split out from ROLE_ASSIGN. This is
+  // deliberately NOT the same flag as canAssignRole: a user with ROLE_MANAGE
+  // but not ADMIN_TRANSFER can assign/unassign ordinary roles but must not
+  // see "Make Admin" as available.
+  const canTransferAdmin = hasPermission('ADMIN_TRANSFER');
+  // Deactivate — PATCH /users/{userId}/deactivate is gated on USER_DEACTIVATE
+  // (split out from USER_INVITE).
+  const canDeactivate = hasPermission('USER_DEACTIVATE');
 
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -175,7 +186,7 @@ function Members() {
                       else if (isDisabled) baseDisabledReason = 'This member is deactivated';
                       else if (isAdmin) baseDisabledReason = 'This member is already the Admin';
 
-                      // Assign role — gated on ROLE_ASSIGN (matches
+                      // Assign role — gated on ROLE_MANAGE (matches
                       // POST /roles/{roleId}/assign/{userId} on the backend)
                       const assignRoleBaseDisabled = isSelf || isDisabled;
                       const assignRoleDisabled = assignRoleBaseDisabled || !canAssignRole;
@@ -184,15 +195,16 @@ function Members() {
                       else if (isDisabled) assignRoleReason = 'This member is deactivated';
                       else if (!canAssignRole) assignRoleReason = 'You do not have permission to assign roles';
 
-                      // Make Admin (transfer-admin) — gated on ROLE_ASSIGN (matches
-                      // POST /roles/transfer-admin/{newUserId} on the backend)
-                      const transferDisabled = baseDisabled || !canAssignRole;
+                      // Make Admin (transfer-admin) — gated on ADMIN_TRANSFER (matches
+                      // POST /roles/transfer-admin/{newUserId} on the backend). Deliberately
+                      // independent of canAssignRole — see note at the top of this file.
+                      const transferDisabled = baseDisabled || !canTransferAdmin;
                       let transferReason = baseDisabledReason;
-                      if (!baseDisabled && !canAssignRole) {
+                      if (!baseDisabled && !canTransferAdmin) {
                         transferReason = 'You do not have permission to transfer admin rights';
                       }
 
-                      // Deactivate — gated on USER_INVITE (matches
+                      // Deactivate — gated on USER_DEACTIVATE (matches
                       // PATCH /users/{userId}/deactivate on the backend)
                       const deactivateDisabled = baseDisabled || !canDeactivate;
                       let deactivateReason = baseDisabledReason;
@@ -203,7 +215,7 @@ function Members() {
                       const renderRoleTag = (roleName, isPopoverTag) => {
                         const isAdminTag = roleName === 'Admin';
                         // Unassign calls DELETE /roles/{roleId}/unassign/{userId},
-                        // which is also gated on ROLE_ASSIGN on the backend.
+                        // which is also gated on ROLE_MANAGE on the backend.
                         const canRemove =
                           !isAdminTag && !onlyOneRole && !isDisabled && canAssignRole;
                         return (
