@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import './Topbar.css';
 
-function Topbar({ orgName }) {
-  const { logout } = useContext(AuthContext);
+function Topbar() {
+  const { logout, organization } = useContext(AuthContext);
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -14,7 +14,7 @@ function Topbar({ orgName }) {
 
   return (
     <div className="topbar">
-      <div className="org-pill">{orgName || 'Loading…'}</div>
+      <div className="org-pill">{organization?.name || 'Loading…'}</div>
       <button className="logout-btn" onClick={handleLogout}>
         Logout
       </button>
