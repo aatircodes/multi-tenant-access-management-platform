@@ -28,7 +28,7 @@ function RoleDetail() {
   // gated on PERMISSION_MANAGE (renamed/split from ROLE_ASSIGN).
   const canManagePermissions = hasPermission('PERMISSION_MANAGE');
   // Deleting a role calls DELETE /api/roles/{roleId}, gated on its own ROLE_DELETE —
-  // no longer the same permission as ROLE_CREATE, despite the old comment here saying so.
+  // no longer the same permission as ROLE_CREATE.
   const canDelete = hasPermission('ROLE_DELETE');
 
   const loadRole = async () => {
@@ -217,16 +217,11 @@ function RoleDetail() {
                     </div>
                   </>
                 ) : (
-                  <>
-                    {!canManagePermissions && (
-                      <div className={styles.saveNote}>
-                        You don't have permission to modify role permissions.
-                      </div>
-                    )}
+                  !canManagePermissions && (
                     <div className={styles.saveNote}>
-                      To remove this role's last permission, delete the role itself instead.
+                      You don't have permission to modify role permissions.
                     </div>
-                  </>
+                  )
                 )}
               </>
             )}
