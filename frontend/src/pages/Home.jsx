@@ -7,8 +7,8 @@ import Topbar from '../components/Topbar';
 import './Home.css';
 
 function Home() {
-  const { claims, hasPermission } = useContext(AuthContext);
-  const [org, setOrg] = useState(null);
+  const { claims, hasPermission, hasAnyPermission, organization, organizationError } =
+    useContext(AuthContext);
   const [usage, setUsage] = useState(null);
   const [users, setUsers] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
@@ -16,14 +16,18 @@ function Home() {
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const [sectionErrors, setSectionErrors] = useState({});
 
+  // GET /api/users now accepts ROLE_READ, ROLE_MANAGE, or ADMIN_TRANSFER (widened
+  // alongside the ROLE_ASSIGN -> ROLE_MANAGE/ADMIN_TRANSFER permission split) —
+  // matches that gate exactly rather than the old ROLE_READ-only check.
+  const canViewMembers = hasAnyPermission(['ROLE_READ', 'ROLE_MANAGE', 'ADMIN_TRANSFER']);
+
   useEffect(() => {
     async function loadDashboard() {
       setLoading(true);
       const errors = {};
 
-      const orgPromise = axiosClient.get('/organizations/me');
       const usagePromise = axiosClient.get('/usage');
-      const usersPromise = hasPermission('ROLE_READ')
+      const usersPromise = canViewMembers
         ? axiosClient.get('/users')
         : Promise.resolve(null);
       // Only attempt this call if the user actually holds AUDIT_VIEW — avoids
@@ -33,18 +37,11 @@ function Home() {
         ? axiosClient.get('/audit-logs')
         : Promise.resolve(null);
 
-      const [orgRes, usageRes, usersRes, auditRes] = await Promise.allSettled([
-        orgPromise,
+      const [usageRes, usersRes, auditRes] = await Promise.allSettled([
         usagePromise,
         usersPromise,
         auditPromise,
       ]);
-
-      if (orgRes.status === 'fulfilled') {
-        setOrg(orgRes.value.data);
-      } else {
-        errors.org = 'Failed to load organization info.';
-      }
 
       if (usageRes.status === 'fulfilled') {
         setUsage(usageRes.value.data);
@@ -130,14 +127,14 @@ function Home() {
 
   return (
     <div className="app">
-      <Topbar orgName={org?.name} />
+      <Topbar />
       <div className="layout">
         <Sidebar active="home" />
         <div className="content">
           <div className="content-inner">
             <div className="greeting">Welcome back, {orgFirstName}</div>
             <div className="subtext">
-              Here's what's happening in {org?.name || 'your organization'} today.
+              Here's what's happening in {organization?.name || 'your organization'} today.
             </div>
 
             {loading ? (
@@ -145,18 +142,18 @@ function Home() {
             ) : (
               <>
                 <h2>Organization</h2>
-                {sectionErrors.org ? (
-                  <div className="dashboard-error">{sectionErrors.org}</div>
+                {organizationError ? (
+                  <div className="dashboard-error">Failed to load organization info.</div>
                 ) : (
                   <div className="card org-card">
                     <div className="org-grid">
                       <div>
                         <div className="org-field-label">Organization slug</div>
-                        <div className="org-field-value">{org?.slug}</div>
+                        <div className="org-field-value">{organization?.slug}</div>
                       </div>
                       <div>
                         <div className="org-field-label">Created</div>
-                        <div className="org-field-value">{formatDate(org?.createdAt)}</div>
+                        <div className="org-field-value">{formatDate(organization?.createdAt)}</div>
                       </div>
                       <div>
                         <div className="org-field-label">Your role</div>
@@ -164,7 +161,7 @@ function Home() {
                       </div>
                       <div>
                         <div className="org-field-label">Rate limit</div>
-                        <div className="org-field-value">{org?.requestLimitPerMinute} req/min</div>
+                        <div className="org-field-value">{organization?.requestLimitPerMinute} req/min</div>
                       </div>
                     </div>
                   </div>
@@ -198,7 +195,7 @@ function Home() {
                       </div>
                     </div>
                   )}
-                  {hasPermission('ROLE_READ') && (
+                  {canViewMembers && (
                     sectionErrors.users ? (
                       <div className="dashboard-error">{sectionErrors.users}</div>
                     ) : (
