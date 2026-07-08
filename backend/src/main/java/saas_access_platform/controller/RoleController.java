@@ -26,13 +26,13 @@ public class RoleController {
     }
 
     @GetMapping
-    @PreAuthorize("hasPermission(null, 'ROLE_READ')")
+    @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'ROLE_MANAGE') or hasPermission(null, 'PERMISSION_MANAGE') or hasPermission(null, 'ADMIN_TRANSFER')")
     public ResponseEntity<List<RoleResponse>> getAllRoles() {
         return ResponseEntity.ok(roleService.getAllRoles());
     }
 
     @PostMapping("/{roleId}/assign/{userId}")
-    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    @PreAuthorize("hasPermission(null, 'ROLE_MANAGE')")   // renamed from ROLE_ASSIGN
     public ResponseEntity<Void> assignRoleToUser(
             @PathVariable Long roleId,
             @PathVariable Long userId) {
@@ -41,7 +41,7 @@ public class RoleController {
     }
 
     @DeleteMapping("/{roleId}/unassign/{userId}")
-    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    @PreAuthorize("hasPermission(null, 'ROLE_MANAGE')")   // renamed from ROLE_ASSIGN
     public ResponseEntity<Void> unassignRoleFromUser(
             @PathVariable Long roleId,
             @PathVariable Long userId) {
@@ -50,7 +50,7 @@ public class RoleController {
     }
 
     @PostMapping("/{roleId}/permissions/{permissionId}")
-    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    @PreAuthorize("hasPermission(null, 'PERMISSION_MANAGE')")   // was ROLE_ASSIGN
     public ResponseEntity<Void> assignPermissionToRole(
             @PathVariable Long roleId,
             @PathVariable Long permissionId) {
@@ -59,13 +59,13 @@ public class RoleController {
     }
 
     @GetMapping("/{roleId}/permissions")
-    @PreAuthorize("hasPermission(null, 'ROLE_READ')")
+    @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'PERMISSION_MANAGE')")   // widened
     public ResponseEntity<List<PermissionResponse>> getRolePermissions(@PathVariable Long roleId) {
         return ResponseEntity.ok(roleService.getRolePermissions(roleId));
     }
 
     @DeleteMapping("/{roleId}/permissions/{permissionId}")
-    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    @PreAuthorize("hasPermission(null, 'PERMISSION_MANAGE')")   // was ROLE_ASSIGN
     public ResponseEntity<Void> removePermissionFromRole(
             @PathVariable Long roleId,
             @PathVariable Long permissionId) {
@@ -74,14 +74,14 @@ public class RoleController {
     }
 
     @PostMapping("/transfer-admin/{newUserId}")
-    @PreAuthorize("hasPermission(null, 'ROLE_ASSIGN')")
+    @PreAuthorize("hasPermission(null, 'ADMIN_TRANSFER')")   // was ROLE_ASSIGN
     public ResponseEntity<Void> transferAdmin(@PathVariable Long newUserId) {
         roleService.transferAdmin(newUserId);
         return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{roleId}")
-    @PreAuthorize("hasPermission(null, 'ROLE_CREATE')")
+    @PreAuthorize("hasPermission(null, 'ROLE_DELETE')")   // was ROLE_CREATE
     public ResponseEntity<Void> deleteRole(@PathVariable Long roleId) {
         roleService.deleteRole(roleId);
         return ResponseEntity.noContent().build();
