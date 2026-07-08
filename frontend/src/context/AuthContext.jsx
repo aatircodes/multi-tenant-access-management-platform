@@ -23,6 +23,9 @@ export function AuthProvider({ children }) {
   });
   const [permissions, setPermissions] = useState([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
+  const [organization, setOrganization] = useState(null);
+  const [organizationLoading, setOrganizationLoading] = useState(false);
+  const [organizationError, setOrganizationError] = useState(false);
 
   // Resolves the current user's merged permission set directly from the backend.
   // This calls GET /users/me-permissions, which has no permission gate of its own
@@ -45,18 +48,38 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // Resolves the current org's display info once per session. Loaded here rather than
+  // per-page so every screen (via Topbar) shows the org name consistently, instead of
+  // each page needing its own fetch and prop-drilling it down to Topbar individually.
+  const loadOrganization = useCallback(async () => {
+    setOrganizationLoading(true);
+    setOrganizationError(false);
+    try {
+      const response = await axiosClient.get('/organizations/me');
+      setOrganization(response.data);
+    } catch (err) {
+      console.error('Failed to load organization', err);
+      setOrganization(null);
+      setOrganizationError(true);
+    } finally {
+      setOrganizationLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (token) {
       localStorage.setItem('token', token);
       const decoded = decodeToken(token);
       setClaims(decoded);
       loadPermissions();
+      loadOrganization();
     } else {
       localStorage.removeItem('token');
       setClaims(null);
       setPermissions([]);
+      setOrganization(null);
     }
-  }, [token, loadPermissions]);
+  }, [token, loadPermissions, loadOrganization]);
 
   const login = (newToken) => {
     setToken(newToken);
@@ -75,6 +98,9 @@ export function AuthProvider({ children }) {
     claims,
     permissions,
     permissionsLoading,
+    organization,
+    organizationLoading,
+    organizationError,
     isAuthenticated: !!token,
     hasPermission,
     hasAnyPermission,
