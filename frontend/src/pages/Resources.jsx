@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useContext } from 'react';
 import axiosClient from '../api/axiosClient';
-import { useAuth } from '../context/AuthContext';
+import { AuthContext } from '../context/AuthContext';
 import Topbar from '../components/Topbar';
 import Sidebar from '../components/Sidebar';
 import styles from './Resources.module.css';
 
 function Resources() {
-  const { hasPermission } = useAuth();
+  const { hasPermission } = useContext(AuthContext);
 
   const [resources, setResources] = useState([]);
   const [ownerMap, setOwnerMap] = useState({}); // userId -> email
@@ -47,7 +47,7 @@ function Resources() {
   const canDelete = hasPermission('RESOURCE_DELETE');
 
   const loadOwnerMap = useCallback(async () => {
-    const result = await Promise.allSettled([axiosClient.get('/api/users')]);
+    const result = await Promise.allSettled([axiosClient.get('/users/basic-info')]);
     if (result[0].status === 'fulfilled') {
       const map = {};
       result[0].value.data.forEach((user) => {
@@ -62,7 +62,7 @@ function Resources() {
     setError('');
     try {
       const apiPage = pageNumberUi - 1; // convert to 0-indexed
-      const response = await axiosClient.get('/api/resources', {
+      const response = await axiosClient.get('/resources', {
         params: { page: apiPage, size: PAGE_SIZE },
       });
       setResources(response.data.content);
@@ -99,7 +99,7 @@ function Resources() {
     setLoading(true);
     setError('');
     try {
-      const response = await axiosClient.get('/api/resources/search', {
+      const response = await axiosClient.get('/resources/search', {
         params: { name: value.trim() },
       });
       setResources(response.data);
@@ -118,7 +118,7 @@ function Resources() {
     }
     setCreating(true);
     try {
-      await axiosClient.post('/api/resources', {
+      await axiosClient.post('/resources', {
         name: createName.trim(),
         description: createDescription.trim() || null,
       });
@@ -152,7 +152,7 @@ function Resources() {
     }
     setEditSaving(true);
     try {
-      await axiosClient.put(`/api/resources/${editingResource.id}`, {
+      await axiosClient.put(`/resources/${editingResource.id}`, {
         name: editName.trim(),
         description: editDescription.trim() || null,
       });
@@ -174,7 +174,7 @@ function Resources() {
     setDeleteError('');
     setDeleting(true);
     try {
-      await axiosClient.delete(`/api/resources/${deletingResource.id}`);
+      await axiosClient.delete(`/resources/${deletingResource.id}`);
       setDeletingResource(null);
       if (isSearching) {
         handleSearchChange({ target: { value: searchTerm } });

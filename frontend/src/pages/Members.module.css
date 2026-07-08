@@ -45,7 +45,7 @@
   background: #fff;
   border-radius: 14px;
   box-shadow: 0 1px 2px rgba(16,16,20,0.04), 0 4px 16px rgba(16,16,20,0.05);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .table {
@@ -64,11 +64,27 @@
   padding: 10px 24px;
 }
 
+.table thead th:first-child {
+  border-top-left-radius: 14px;
+}
+
+.table thead th:last-child {
+  border-top-right-radius: 14px;
+}
+
 .table tbody td {
   padding: 16px 24px;
   font-size: 13.5px;
   border-top: 1px solid #E4E4E7;
   vertical-align: middle;
+}
+
+.table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: 14px;
+}
+
+.table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: 14px;
 }
 
 .disabledRow {
@@ -110,12 +126,38 @@
   background: #F7F7F8;
   padding: 2px 8px;
   border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .roleTagAdmin {
   color: #4338CA;
   font-weight: 600;
   background: #EEF0FD;
+}
+
+.roleTagRemovable {
+  padding-right: 4px;
+}
+
+.roleTagRemoveBtn {
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: #71717A;
+  background: #EDEDEF;
+  border: none;
+  padding: 3px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.roleTagRemoveBtn:hover {
+  color: #B42318;
+  background: #FEF2F2;
 }
 
 .roleMore {
@@ -146,10 +188,12 @@
   border-radius: 8px;
   padding: 8px;
   box-shadow: 0 4px 16px rgba(16,16,20,0.1);
-  z-index: 10;
+  z-index: 100;
   flex-direction: column;
   gap: 4px;
-  min-width: 120px;
+  min-width: 140px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .roleMorePopoverOpen {
@@ -190,6 +234,7 @@
   background: #fff;
   color: #3F3F46;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .iconBtn:hover:not(:disabled) {
@@ -221,7 +266,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  z-index: 200;
 }
 
 .modalCard {
@@ -316,6 +361,36 @@
   color: #B42318;
   margin-bottom: 16px;
   margin-top: -14px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #3F3F46;
+  margin-bottom: 7px;
+}
+
+.roleSelect {
+  width: 100%;
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 14px;
+  padding: 9px 12px;
+  border: 1px solid #E4E4E7;
+  border-radius: 8px;
+  color: #000000;
+  background: #fff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.roleSelect:focus {
+  border-color: #4338CA;
+  box-shadow: 0 0 0 3px #EEF0FD;
 }
 
 .loadingState {

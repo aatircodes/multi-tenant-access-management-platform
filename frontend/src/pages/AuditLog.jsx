@@ -162,7 +162,10 @@ function AuditLog() {
                           <span className={styles.actionBadge}>{log.action}</span>
                         </td>
                         <td className={styles.entity}>
-                          {log.entityType} #{log.entityId}
+                          {`${log.entityType
+                            .toLowerCase()
+                            .replace(/_/g, ' ')
+                            .replace(/\b\w/g, (c) => c.toUpperCase())} ID: ${log.entityId}`}
                         </td>
                         <td className={styles.actor}>
                           {actorMap[log.actorUserId] || `User #${log.actorUserId}`}

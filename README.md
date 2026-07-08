@@ -21,6 +21,7 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 - [Test Coverage](#test-coverage)
 - [Design Decisions](#design-decisions)
 - [Build Progress](#build-progress)
+- [Known Issues & Open Questions](#known-issues--open-questions)
 - [Setup and Running Locally](#setup-and-running-locally)
 - [Live Demo](#live-demo)
 
@@ -178,6 +179,9 @@ Actions logged automatically via AOP:
 | PERMISSION_REMOVED | removePermissionFromRole() |
 | ADMIN_TRANSFERRED | transferAdmin() |
 | USER_DEACTIVATED | deactivateUser() |
+| INVITE_REVOKED | revokeInvitation() |
+| ROLE_DELETED | deleteRole() |
+| ROLE_UNASSIGNED | unassignRoleFromUser() |
 
 **Fixed during testing:** `entityId` originally showed `0` for every create-style action
 (`RESOURCE_CREATED`, `INVITE_SENT`, `ROLE_CREATED`) because the aspect only inspected the
@@ -620,6 +624,8 @@ Response `204 No Content` — no body returned.
 | Method | Endpoint | Permission |
 |---|---|---|
 | GET | /api/users | ROLE_READ |
+| GET | /api/users/basic-info | None (self-serve, id + email only) |
+| GET | /api/users/me-permissions | None (self-serve, caller's own permissions only) |
 | PATCH | /api/users/{userId}/deactivate | USER_INVITE |
 
 **GET /api/users**
@@ -644,6 +650,32 @@ Response `200`:
 
 Used by the frontend to populate the Transfer Admin member picker, and to derive
 "active members" and "members per role" counts without a separate aggregation endpoint.
+
+**GET /api/users/basic-info**
+
+Response `200`:
+```json
+[
+    { "id": 2, "email": "priya@acme.com" }
+]
+```
+
+Returns only `id` and `email` for every user in the caller's org — no roles, no status, nothing
+sensitive. Added so that the Resources owner column and the Audit log actor column can resolve
+a real email address instead of a bare user ID, without depending on `ROLE_READ`. Deliberately
+has no `@PreAuthorize` — see Design Decisions.
+
+**GET /api/users/me-permissions**
+
+Response `200`:
+```json
+["RESOURCE_READ", "RESOURCE_CREATE"]
+```
+
+Returns the caller's own merged permission codes, resolved across every role they hold. Also
+has no `@PreAuthorize` by design — its entire purpose is answering "what am I allowed to do"
+before any specific permission is known, so it can't depend on already having one. See Design
+Decisions and Build Progress (Phase 6b) for the bug this fixed.
 
 **PATCH /api/users/{userId}/deactivate**
 
@@ -940,6 +972,17 @@ passing through `GlobalExceptionHandler`.
 | Get current organization, authenticated | 200 with name, slug, requestLimitPerMinute, createdAt | Passed |
 | Get current organization, no JWT | 401 | Passed |
 
+### Phase 6b continued — Permission-Resolution Fix and Display Endpoints
+
+| Test | Expected | Result |
+|---|---|---|
+| GET /api/users/me-permissions as a user with only RESOURCE_READ (no ROLE_READ) | 200, `["RESOURCE_READ"]` | Passed |
+| Resources tab and resource list load correctly for that same user after the frontend fix | Sidebar and page both accessible | Passed |
+| GET /api/users/basic-info as a user with no ROLE_READ | 200, array of `{id, email}` | Passed |
+| Resources owner column shows an email instead of "User #N" after the frontend fix | Confirmed in browser | Passed |
+| Members page action buttons for a role holding ROLE_READ + USER_INVITE only | Deactivate enabled; Make Admin, Assign role, Unassign disabled with a tooltip | Passed |
+| Deactivate action for that same role | Succeeds — USER_INVITE is genuinely sufficient per current backend gating | Passed |
+
 ---
 
 ## Design Decisions
@@ -1205,6 +1248,21 @@ list, with a short pointer note directing to Members for the transfer action. No
 was needed — `POST /api/roles/transfer-admin/{newUserId}` already accepted a bare path
 parameter with no page-specific dependency.
 
+### Why does GET /api/invitations never include the raw token, even for still-pending invitations?
+
+A list of everyone currently invited should not expose raw invitation tokens — that's the same
+reasoning as the original design decision above, extended to cover the list endpoint too. Even
+though this project simulates email delivery via a manually-copied link rather than an actual
+inbox, the correct mental model is that the token is minted and exposed exactly once, at
+send-time, the same way a real email would be sent to exactly one recipient and not be
+re-fetchable from an admin dashboard afterward. The frontend's Invitations screen reflects this
+directly: a "Copy invite link" button works immediately after sending (the token is held in
+React state from the `POST` response), but after a page refresh the same button shows an
+explicit notice — "Link no longer available for security reasons. Revoke and resend to generate
+a new one." — rather than silently failing or fabricating a stale link. Resending via
+revoke-then-invite is the correct recovery path, not "recovering" the old token, since it also
+naturally invalidates the original link.
+
 ### Why do Members rows collapse multiple roles into a "+N more" badge instead of listing every role tag?
 
 `UserResponse.roles` is a list — a single user can hold multiple roles simultaneously (e.g. both
@@ -1217,6 +1275,103 @@ what the row is actually for. The fix shows the first role directly (covering th
 single-role case with zero extra interaction) and collapses any additional roles behind a
 `+N more` badge that reveals the full list in a small popover on click — every row stays a
 consistent height regardless of how many roles a member holds.
+
+### Why are permission IDs resolved dynamically from the Admin role instead of hardcoded?
+
+The Role Detail screen needs the numeric ID behind each of the 9 fixed permission codes to call
+the assign/remove endpoints, but no endpoint returns "all 9 permissions with their IDs" directly
+— `GET /api/roles/{roleId}/permissions` only returns whichever ones a *specific* role currently
+holds. An early attempt hardcoded a `code -> id` mapping by hand, based on the order one example
+response happened to return them in. This caused a real, confusing bug: toggling a permission ON
+worked, but toggling it back OFF failed, because the hardcoded ID for at least one code didn't
+match its actual seeded value, so the `DELETE` call targeted a permission-role association that
+didn't exist. Since the Admin role is documented as always holding all 9 permissions by design,
+it's a reliable, self-updating source of truth: the frontend fetches Admin's permission list once
+per Role Detail page load and builds the `code -> id` map from that response, rather than trusting
+a hand-typed guess that can silently drift out of sync with whatever the backend actually seeded.
+
+### Why does transferring Admin force an immediate logout for the person who transferred it?
+
+Early testing surfaced that after a successful `POST /api/roles/transfer-admin/{id}`, the
+now-former-Admin's UI appeared to "crash" — buttons that should have become disabled stayed
+clickable, and clicking them failed with no clear explanation. This isn't a bug in the usual
+sense; it's an inherent property of stateless JWT auth. The caller's browser still holds their
+*old* token, minted at login time with `roles: ["Admin"]` baked into its claims, and nothing
+about a backend-side permission change updates a JWT that's already been issued — the token is
+only ever re-derived at the next login. The correct fix isn't defensively handling every possible
+stale-permission 403 throughout the app; it's recognizing that a successful Admin transfer is
+one of the few actions where the caller's *entire* permission set changes in a single moment, so
+forcing a clean re-login immediately afterward is the honest, correct response rather than
+letting them continue operating on claims that are now wrong.
+
+### Why does deleting a role require unassigning all members first, instead of cascading?
+
+Real SaaS products differ here — AWS IAM blocks deleting a role/policy while anything is still
+attached to it (a hard conflict error, detach first), while systems like GitHub Teams or Okta
+Groups cascade a group deletion by silently stripping that group's access from every member. The
+cascade approach doesn't fit this project, though, because of an invariant already established
+elsewhere: every user must always hold at least one role (enforced by `unassignRoleFromUser`'s
+own guard). A cascading role deletion would either need to silently violate that invariant for
+anyone whose *only* role was the one being deleted, or perform the same "does removing this leave
+someone at zero roles" check that the blocking approach requires anyway — just automatically,
+with more room for a single careless click to strip several people's access at once with no
+intermediate confirmation per person affected. Blocking deletion outright when `memberCount > 0`
+(requiring members to be unassigned or reassigned first, one deliberate action at a time) avoids
+that risk entirely and mirrors a real, citable industry precedent (AWS IAM's model) rather than
+inventing a bespoke cascade-with-safety-checks that accomplishes the same end state with more
+complexity.
+
+### Why CSS Modules instead of one shared global stylesheet across pages?
+
+Early in the React build, every page's CSS was written as a plain `.css` file imported
+independently (`Login.css`, `Home.css`, `Invitations.css`, etc.), using generic class names like
+`.field`, `.card`, and `.btn-primary` that were assumed to be page-local. Vite doesn't scope
+plain CSS imports, though — once a person navigates between pages in the same SPA session, every
+previously-imported stylesheet remains active simultaneously, so identically-named classes from
+different pages collide and whichever was loaded last wins ties in the cascade. This surfaced as
+real, confusing bugs on the Invitations screen: an oversized "Send invite" button (inheriting a
+`width: 100%` rule from `Login.css`'s `.btn-primary`) and a collapsed email input, plus buttons
+inside the invite form defaulting to `type="submit"` and triggering the wrong handler. The fix
+was converting each page's stylesheet to a CSS Module (`Invitations.module.css`, imported as
+`import styles from './Invitations.module.css'`), which Vite compiles into guaranteed-unique
+class names per file automatically. This is the standard scoping approach for component-based
+React UIs (the plain-global-stylesheet approach from traditional HTML/CSS doesn't hold up once
+multiple independently-authored stylesheets can be active in the DOM at once) and was retrofitted
+across all existing pages before continuing to new screens, to avoid repeating the same class of
+bug on every subsequent page.
+
+### Why do GET /api/users/me-permissions and GET /api/users/basic-info have no @PreAuthorize at all?
+
+Both exist to fix the same underlying flaw in two different places — a permission-reading or
+purely display-oriented endpoint gated behind a permission that not every legitimate caller
+would actually hold. `me-permissions` only ever returns the caller's own permission list, which
+makes it impossible to use for snooping on anyone else. `basic-info` only ever returns `id` and
+`email` — no roles, no status, nothing sensitive — purely so the UI can label an owner or actor
+column with a real email address instead of a bare user ID. Gating either one behind a
+permission would just recreate the exact deadlock they were built to solve: a user without that
+permission couldn't find out what they *can* do, or couldn't see who owns something they're
+already allowed to view. See Known Issues for a related, still-open case of this same pattern
+with `ROLE_ASSIGN`.
+
+### Why does the sidebar disable inaccessible nav items instead of hiding them?
+
+Early testing with a ReadOnly-role invited user surfaced two related problems: the Home
+dashboard's `Promise.all(...)` call rejected entirely the moment any single request came back
+`403` (e.g. `GET /api/audit-logs` without `AUDIT_VIEW`), wiping out sections the user *did* have
+access to; and the sidebar rendered every nav link unconditionally, so clicking "Invitations"
+as a ReadOnly user navigated to a page that immediately failed to load anything, with no
+explanation. Both were fixed by leaning further into the permission-driven rendering model
+already established for the rest of the app. Home now uses `Promise.allSettled(...)` and
+resolves each section independently against the user's actual permission set (skipping the
+`GET /api/audit-logs` call entirely, rather than firing it and catching the failure, when
+`AUDIT_VIEW` isn't held) so a ReadOnly user simply sees the sections they're allowed to see, with
+no error noise for the ones they aren't. The sidebar takes the same approach one level up: each
+nav item declares the permission it requires, and items the user lacks render as visibly
+disabled with a tooltip ("You don't have permission to access this section") rather than
+vanishing outright — surfacing what exists in the product without ever routing to a page
+guaranteed to fail is more informative than silently hiding sections, since it lets a user
+understand what they'd need additional access for for on their own without leaving them wondering
+why a piece of the interface disappeared.
 
 ---
 
@@ -1232,8 +1387,8 @@ consistent height regardless of how many roles a member holds.
 | 5 | Rate Limiting — Redis, token bucket, atomic Lua script, usage endpoint | Complete |
 | 6a | Backend extensions — admin governance, deactivate-user, pagination, extended endpoints, full test pass (37 tests, 36 passed, 1 not independently testable) | Complete |
 | 6a | Frontend design — 10 screens designed and reviewed against the real API contract (Login, Register + Success, Home, Resources, Roles, Invitations, Members, Accept-Invitation, Audit log) | Complete |
-| 6b | React Frontend — Vite init, Axios client, AuthContext, screens per finalized design system | Not yet started |
-| 7 | Tests — additional coverage as needed once frontend surfaces new edge cases | Pending |
+| 6b | React Frontend — all nine screens built and tested end-to-end against the live backend | Complete |
+| 7 | Tests — additional coverage for edge cases the frontend surfaced | Pending |
 | 8 | Docker + Deploy — multi-stage Dockerfile, Render/Railway | Pending |
 
 **Backend additions made during Phase 6a** (surfaced by designing against the real API and
@@ -1270,13 +1425,213 @@ for full detail):
   flow itself is unaffected by how the link reaches the invitee, so swapping in real email
   delivery later requires no change to the token model or any endpoint
 
-**Known small cleanup items, deferred to Phase 6b (no backend changes required):**
+**Known small cleanup items from Phase 6a — resolved during Phase 6b:**
 
-- Login screen's non-functional "Forgot password?" link — to be removed
-- "Roles" nav/page label — to be renamed to "Roles & Permissions" across all screens
-- Home's Organization card and Recent Activity feed — currently mocked with placeholder data in
-  the static design; wired to `GET /api/organizations/me` and `GET /api/audit-logs` respectively
-  once the React build reaches Home
+- Login screen's non-functional "Forgot password?" link — removed
+- "Roles" nav/page label — renamed to "Roles & Permissions" in the shared `Sidebar` component
+- Home's Organization card and Recent Activity feed — wired to `GET /api/organizations/me` and
+  `GET /api/audit-logs` respectively
+- Brand/logo block originally shown on Login, Register, Register-Success, and Accept-Invitation
+  mockups — removed from all of them per a mid-build decision to keep auth screens free of
+  placeholder branding; the topbar's org-initials badge and user-avatar circle (also originally
+  decorative placeholders with no real data behind them) were likewise replaced with a
+  functional org-name pill and a working Logout button
+
+---
+
+### Phase 6b — React Frontend (complete)
+
+**Stack and setup:** Vite + React (plain JS, not TypeScript), `axios`, `react-router-dom`.
+Folder structure: `src/api` (Axios client), `src/context` (AuthContext), `src/components`
+(shared Sidebar/Topbar), `src/pages` (one file + one CSS Module per screen).
+
+**Infrastructure built:**
+
+- `axiosClient.js` — Axios instance with a request interceptor attaching `Authorization: Bearer
+  <token>` from `localStorage`, and a response interceptor that clears the token and redirects to
+  `/login` on any `401`.
+- `AuthContext.jsx` — decodes the JWT client-side (`sub`, `userId`, `orgId`, `roles`) without
+  verifying its signature (verification is the backend's job on every request). Since the JWT
+  carries role *names* only, not a resolved permission set, the context additionally calls
+  `GET /api/roles` once after login to map role names to IDs, then `GET /api/roles/{id}/permissions`
+  per matched role, merging the results into one flat permission array exposed as
+  `hasPermission(code)`. This mirrors the backend's live, DB-checked permission model rather than
+  trusting anything embedded in the token.
+- **CORS** — `SecurityConfig` initially had no `CorsConfigurationSource`, so every request from
+  the Vite dev server (`localhost:5173`) to the backend (`localhost:8080`) was blocked by the
+  browser before reaching Spring Security at all. Fixed by adding a `CorsConfigurationSource`
+  bean scoped to `http://localhost:5173` with `allowCredentials(true)` (required since the
+  frontend sends an `Authorization` header), wired into the filter chain via `.cors(...)`.
+- **CSS Modules** — see [Design Decisions](#design-decisions) for the full story; every page
+  stylesheet is a `.module.css` file to prevent cross-page class name collisions.
+
+**Screens built and tested end-to-end against the live backend:**
+
+- **Login** — org slug + email + password, password visibility toggle, distinguishes `400`
+  ("Invalid credentials" — deliberately vague per the backend's user-enumeration protection) from
+  other failure modes.
+- **Register / Register-Success** — creates an org via `POST /api/auth/register-org`, passes the
+  returned `orgSlug` to the success screen via React Router navigation `state` (not a URL param,
+  since it's a one-time handoff value), copy-to-clipboard for the slug.
+- **Home** — Organization card, Usage card (with a standalone Refresh button hitting
+  `GET /api/usage` in isolation, not a full page reload), Active Members count, Recent Activity
+  feed. Actor emails in the activity feed are resolved client-side by cross-referencing
+  `actorUserId` against `GET /api/users`, since `GET /api/audit-logs` only returns the numeric ID.
+  Uses `Promise.allSettled` and per-section permission checks (see Design Decisions) so a
+  lower-privilege user sees every section they're entitled to, with no error noise for the rest.
+- **Invitations** — send (role dropdown excludes Admin, per the single-Admin invariant, and shows
+  a "select at least one" style disabled state if no non-Admin roles exist yet), list pending,
+  copy-link (session-only, see Design Decisions on why `GET /api/invitations` never returns a
+  token), revoke.
+- **Accept-Invitation** — reads `?token=` from the URL, calls the newly-added
+  `GET /api/invitations/{token}` to prefill org name/role/email before the user sets a password,
+  then calls `POST /api/auth/accept-invitation` and logs the user in immediately, closing with a
+  reminder screen showing the org slug they'll need for future logins.
+- **Members** — table of all org members with role tags, status badges, and three row-level
+  actions (Assign role, Make Admin, Deactivate) plus a per-tag "Unassign" button for removing
+  individual roles from a multi-role member. All four mutating actions (deactivate, transfer,
+  assign, unassign) share one confirm modal component, switching its title/body/button per
+  action type rather than four separate modals. Successfully transferring Admin immediately logs
+  the caller out and redirects to `/login`, since their JWT's cached permission claims are now
+  stale and continuing to use them would cause silently-wrong permission checks throughout the
+  app — see Design Decisions.
+- **Roles & Permissions** (list + detail) — list view shows role name, LOCKED tag for Admin, and
+  member count; detail view shows all 9 permissions as toggle switches (optimistic UI, rolls back
+  on failure) plus a Delete role button. New-role creation happens in one modal that includes the
+  same toggle switches used on the detail page, so a role is never created with zero permissions
+  (the "Create role" submit button stays disabled with a tooltip until at least one permission is
+  checked) — this replaced an earlier two-step flow (create empty, then configure) that made it
+  possible to leave a role in an invalid zero-permission state. Permission IDs needed for the
+  assign/remove calls are resolved dynamically at runtime from the Admin role's permission list
+  (which always holds all 9 by design) rather than hardcoded, after an earlier hardcoded mapping
+  attempt caused a real bug — see Design Decisions. Deleting a role is disabled (with a tooltip)
+  for the Admin role and for any role that still has members assigned to it.
+- **Resources** — table view with name, description, owner, and per-row Edit/Delete actions,
+  gated on `RESOURCE_UPDATE`/`RESOURCE_DELETE` respectively; a collapsible "+ New resource" panel
+  gated on `RESOURCE_CREATE`; a name search box calling `GET /api/resources/search` directly
+  rather than filtering the current page client-side; and numbered pagination matching the
+  original mockup. The owner column resolves `ownerUserId` to an email address via
+  `GET /api/users/basic-info` (see below) rather than showing a bare user ID, and shows
+  "No description" as an explicit fallback rather than leaving the cell blank when a resource
+  was created without one.
+- **Audit log** — paginated table (Action, Entity, Actor, Timestamp) with an "All actions"
+  dropdown covering the full 13-action list `AuditAspect` actually produces. Since
+  `GET /api/audit-logs` only accepts `page`/`size` — there's no server-side action-type filter
+  parameter — the dropdown filters client-side against whichever page is currently loaded, which
+  means a rare action type on an earlier page won't show up until that page is fetched. Actor
+  emails resolve the same way as Resources' owner column, through `GET /api/users/basic-info`.
+
+**Backend additions and fixes made during Phase 6b** (surfaced by building and testing the
+frontend against the real API, the same pattern as Phase 6a):
+
+- `CorsConfigurationSource` bean added to `SecurityConfig` — see above.
+- `AuditAspect` extended with `INVITE_REVOKED` (on `revokeInvitation()`), `ROLE_DELETED` (on
+  `deleteRole()`), and `ROLE_UNASSIGNED` (on `unassignRoleFromUser()`) — closing gaps where each
+  of these performed a real mutation with no corresponding audit trail entry.
+- **Missing `@Transactional` on `removePermissionFromRole`** — toggling a permission off in the
+  UI reliably failed with `"No EntityManager with actual transaction available for current
+  thread"`, since the underlying `@Modifying`-style delete query needs an active transaction to
+  execute and this method didn't have one (unlike `transferAdmin`, which did). Fixed by adding
+  `@Transactional` to the method.
+- **Minimum-one-permission-per-role guard**, added to `removePermissionFromRole`: rejects
+  (`400`) removing a role's last remaining permission, with a message directing the caller to
+  delete the role instead of leaving it in an empty, meaningless state.
+- **`DELETE /api/roles/{roleId}/unassign/{userId}`** — new endpoint, mirroring the existing
+  `assign` endpoint. Closes a gap where a user could be assigned additional roles from the
+  Members screen but never have one removed short of full deactivation. Includes a
+  minimum-one-role-per-user guard (`400` if it's their last remaining role), and rejects
+  targeting the Admin role directly (use transfer-admin instead), matching the same pattern as
+  `assignRoleToUser`.
+- **`DELETE /api/roles/{roleId}`** — new endpoint. Rejects deleting the Admin role outright, and
+  rejects deleting any role that still has `memberCount > 0`, requiring members to be unassigned
+  first rather than silently cascading the deletion through their role list (see Design
+  Decisions for the reasoning). Deletes the role's `RolePermission` rows before deleting the role
+  itself to avoid a foreign-key conflict. Gated behind `ROLE_CREATE` rather than `ROLE_ASSIGN`,
+  since creation and deletion are the symmetric lifecycle pair for a role, consistent with how
+  `RESOURCE_CREATE`/`RESOURCE_DELETE` are paired in the permission catalog.
+- `UserRoleRepository` gained `countByUserId(Long userId)` and `RolePermissionRepository` gained
+  `deleteAllByRoleId(Long roleId)`, both needed by the two new endpoints above.
+- **Permission-resolution deadlock, found and fixed.** A user holding only `RESOURCE_READ` (no
+  `ROLE_READ`) couldn't access the Resources screen at all, despite holding the exact permission
+  it requires. `AuthContext.jsx`'s original `loadPermissions` resolved a user's full permission
+  set by calling `GET /api/roles` — itself gated behind `ROLE_READ` — then
+  `GET /api/roles/{id}/permissions` per matched role. Any role without `ROLE_READ` caused the
+  first call to 403, and the surrounding `catch` block silently zeroed out the user's entire
+  permission array, not just the role-related parts of it. Fixed with a new endpoint,
+  `GET /api/users/me-permissions`, added to `UserController`/`UserService` rather than a separate
+  controller. It resolves the caller's merged permissions directly
+  (`userId -> UserRole -> roleIds -> RolePermission -> Permission.code`) via
+  `UserRoleRepository.findRoleIdsByUserId`, and deliberately carries **no** `@PreAuthorize` — its
+  entire purpose is to answer "what am I allowed to do" before any specific permission is known
+  to be held, so gating it behind one would just recreate the same deadlock. `AuthContext.jsx`
+  now calls this single endpoint instead of the `GET /roles` + per-role loop.
+- **`GET /api/users/basic-info`** — new endpoint, also without `@PreAuthorize`, returning only
+  `id` and `email` for every user in the caller's org. Added because Resources' owner column and
+  Audit log's actor column both originally resolved names via `GET /api/users`, which requires
+  `ROLE_READ` — so anyone without it saw `User #30` instead of an email. Since this endpoint
+  exposes nothing beyond `id`+`email` (no roles, no status), it's safe for any authenticated org
+  member to call purely for display purposes.
+- **`Members.jsx` had no permission gating at all**, found while testing a role holding
+  `ROLE_READ` + `USER_INVITE`: "Make Admin", "Assign role", and the per-tag "Unassign" button
+  were all clickable, despite each calling an endpoint gated on `ROLE_ASSIGN`, which that role
+  didn't include. Unlike `Sidebar.jsx` and `Resources.jsx`, `Members.jsx`'s action buttons never
+  checked `hasPermission()` — their `disabled` state only considered whether the target was the
+  caller themselves, already deactivated, or already Admin. The backend correctly rejected every
+  one of these calls regardless, so this was a UX/consistency bug rather than an actual security
+  gap — nothing unauthorized was ever genuinely possible. Fixed by gating Assign role/Make
+  Admin/Unassign on `ROLE_ASSIGN` and Deactivate on `USER_INVITE`, matching the backend exactly.
+- **`AuditLog.jsx`'s action-type filter list was incomplete.** The initial 11-entry list was
+  built from the static mockup's `<select>` options and missed three real action types that
+  `AuditAspect.resolveAction()` actually produces: `ROLE_DELETED`, `ROLE_UNASSIGNED`, and
+  `INVITE_REVOKED`. Corrected to the full 13-action list.
+
+Resources and Audit log are now built and tested end-to-end, completing Phase 6b.
+
+---
+
+## Known Issues & Open Questions
+
+These aren't bugs in the sense of broken code — the backend enforces every one of these
+correctly through `@PreAuthorize`. They're surprising consequences of how the nine fixed
+permission codes ended up scoped, found by mixing and matching permissions across custom roles
+rather than by automated testing. Both are pending a decision before Phase 7.
+
+**`USER_INVITE` bundles invite and deactivate together.** `PATCH /api/users/{userId}/deactivate`
+is gated on `USER_INVITE`, the same permission that gates sending invitations. A role granted
+`USER_INVITE` can both invite new members and deactivate existing ones — there's currently no
+way to grant one without the other. Two directions are on the table: keep it as-is and just
+relabel the permission's UI description to something like "Can invite & deactivate users" so
+it's not misleading, or split it into a tenth permission (`USER_DEACTIVATE`) and migrate
+`deactivateUser`'s `@PreAuthorize` plus the matching frontend gate to match. The second is more
+correct long-term but changes the fixed permission catalog and would need a migration for any
+role that already assumed `USER_INVITE` covered deactivation. Not yet decided.
+
+**`ROLE_ASSIGN` has no path to reach the action it grants.** A role holding `ROLE_ASSIGN` but
+not `ROLE_READ` can, in principle, call `POST /api/roles/{roleId}/assign/{userId}` — but has no
+way to actually get there. The sidebar gates the Members nav item on `ROLE_READ` alone, so the
+tab never even appears; and `Members.jsx` itself calls `GET /api/users` and `GET /api/roles`,
+both gated on `ROLE_READ`, so navigating there directly would just fail to load. That makes
+`ROLE_ASSIGN` alone functionally useless unless it's bundled with `ROLE_READ`. Two options here
+too: document "a role with `ROLE_ASSIGN` should also include `ROLE_READ`" as a prerequisite,
+enforced by convention the same way "every role needs at least one permission" already is; or
+loosen the gates so `ROLE_READ` **or** `ROLE_ASSIGN` satisfies both the sidebar's Members check
+and the backend's `GET /api/roles`/`GET /api/users` `@PreAuthorize`, making `ROLE_ASSIGN`
+self-sufficient on its own. Leaning toward the second, for consistency with how the
+`me-permissions`/`basic-info` fix already treats "a permission shouldn't be silently dependent
+on holding a different one to be useful" — but this isn't implemented yet, pending confirmation
+of whether `CustomPermissionEvaluator`'s SpEL setup supports an OR condition across two
+permission codes cleanly.
+
+**The general pattern worth guarding against going forward:** every permission-model surprise
+found this session traces back to the same root cause — a frontend gate (or, in the case of
+`Members.jsx`, no gate at all) checking a different permission than the one the backend
+endpoint it's supposed to protect actually enforces, either because no one had wired a check in
+yet, or because a permission's name implied it covered more or less than its `@PreAuthorize`
+value really does. The rule going forward: before wiring any UI element to a backend call, look
+up that endpoint's exact `@PreAuthorize` string first, rather than inferring it from the
+endpoint's name or the permission's apparent purpose. A full pass across every action button on
+every screen, cross-checked against the real backend annotations, is planned before Phase 7
+testing begins.
 
 ---
 

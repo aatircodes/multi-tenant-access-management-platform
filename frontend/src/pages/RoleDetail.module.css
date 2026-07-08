@@ -218,3 +218,124 @@
   margin-top: 12px;
   text-align: center;
 }
+
+.pageHeaderRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 32px;
+}
+
+.pageHeaderRow .pageTitle,
+.pageHeaderRow .pageSubtitle {
+  margin-bottom: 0;
+}
+
+.pageHeaderRow .pageTitle {
+  margin-bottom: 6px;
+}
+
+.btnDeleteRole {
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #E4E4E7;
+  background: #fff;
+  color: #3F3F46;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btnDeleteRole:hover:not(:disabled) {
+  border-color: #B42318;
+  color: #B42318;
+}
+
+.btnDeleteRole:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modalCard {
+  background: #fff;
+  border-radius: 14px;
+  width: 100%;
+  max-width: 380px;
+  padding: 28px 26px;
+  box-shadow: 0 1px 2px rgba(16,16,20,0.04), 0 12px 40px rgba(16,16,20,0.16);
+}
+
+.modalTitle {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.modalBody {
+  font-size: 13.5px;
+  color: #3F3F46;
+  line-height: 1.55;
+  margin-bottom: 24px;
+}
+
+.modalBody strong {
+  color: #000000;
+  font-weight: 600;
+}
+
+.modalActions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.btnSecondary {
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 15px;
+  border-radius: 8px;
+  border: 1px solid #E4E4E7;
+  background: #fff;
+  color: #3F3F46;
+  cursor: pointer;
+}
+
+.btnSecondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btnDangerSolid {
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 15px;
+  border-radius: 8px;
+  border: none;
+  background: #B42318;
+  color: #fff;
+  cursor: pointer;
+}
+
+.btnDangerSolid:hover:not(:disabled) {
+  background: #96190F;
+}
+
+.btnDangerSolid:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
