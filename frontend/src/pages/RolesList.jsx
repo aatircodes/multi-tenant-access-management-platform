@@ -6,7 +6,7 @@ import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
 import styles from './RolesList.module.css';
 
-// Fixed, closed permission catalog — documented as permanently fixed at 9 codes.
+// Fixed, closed permission catalog — documented as permanently fixed at 13 codes.
 // Not fetched from any endpoint since none exists (nor should one, for a closed set).
 export const ALL_PERMISSIONS = [
   { code: 'RESOURCE_CREATE', description: 'Can create resources' },
@@ -14,9 +14,13 @@ export const ALL_PERMISSIONS = [
   { code: 'RESOURCE_UPDATE', description: 'Can update resources' },
   { code: 'RESOURCE_DELETE', description: 'Can delete resources' },
   { code: 'ROLE_CREATE', description: 'Can create roles' },
+  { code: 'ROLE_DELETE', description: 'Can delete roles' },
   { code: 'ROLE_READ', description: 'Can read roles' },
-  { code: 'ROLE_ASSIGN', description: 'Can assign roles and permissions' },
-  { code: 'USER_INVITE', description: 'Can invite users' },
+  { code: 'ROLE_MANAGE', description: 'Can assign and unassign roles to/from users' },
+  { code: 'PERMISSION_MANAGE', description: 'Can add and remove permissions on a role' },
+  { code: 'ADMIN_TRANSFER', description: 'Can transfer admin ownership to another user' },
+  { code: 'USER_INVITE', description: 'Can invite, list, and revoke user invitations' },
+  { code: 'USER_DEACTIVATE', description: 'Can deactivate a user' },
   { code: 'AUDIT_VIEW', description: 'Can view audit logs' },
 ];
 
@@ -26,8 +30,13 @@ function RolesList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Authoritative code -> id map, resolved from the Admin role (which always holds all 9
-  // permissions), so the create-role flow can call the assign endpoint correctly.
+  // Assigning a permission during role creation calls POST /roles/{roleId}/permissions/{permissionId},
+  // gated on PERMISSION_MANAGE — a separate permission from ROLE_CREATE. A user without it can still
+  // create a role, just not with any permissions attached from this modal.
+  const canManagePermissions = hasPermission('PERMISSION_MANAGE');
+
+  // Authoritative code -> id map, resolved from the Admin role (which always holds every
+  // permission in the catalog), so the create-role flow can call the assign endpoint correctly.
   const [permissionIdByCode, setPermissionIdByCode] = useState({});
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -64,6 +73,7 @@ function RolesList() {
   }, []);
 
   const togglePermission = (code) => {
+    if (!canManagePermissions) return;
     setSelectedCodes((prev) => {
       const next = new Set(prev);
       if (next.has(code)) {
@@ -191,8 +201,18 @@ function RolesList() {
               </div>
 
               <div className={styles.sectionLabel}>
-                Permissions <span style={{ fontWeight: 400, color: '#B45309' }}>— select at least one</span>
+                Permissions
+                {canManagePermissions && (
+                  <span style={{ fontWeight: 400, color: '#B45309' }}> — select at least one</span>
+                )}
               </div>
+              {!canManagePermissions && (
+                <div className={styles.saveNote}>
+                  You don't have permission to assign permissions. The role will be created
+                  without any — open it afterward to add permissions once someone with that
+                  permission does so.
+                </div>
+              )}
               <div className={styles.permList}>
                 {ALL_PERMISSIONS.map((permission) => (
                   <div className={styles.permRow} key={permission.code}>
@@ -204,6 +224,7 @@ function RolesList() {
                       <input
                         type="checkbox"
                         checked={selectedCodes.has(permission.code)}
+                        disabled={!canManagePermissions}
                         onChange={() => togglePermission(permission.code)}
                       />
                       <span className={styles.slider}></span>
@@ -225,8 +246,12 @@ function RolesList() {
                 <button
                   type="submit"
                   className={styles.btnPrimary}
-                  disabled={creating || selectedCodes.size === 0}
-                  title={selectedCodes.size === 0 ? 'Select at least one permission' : ''}
+                  disabled={creating || (canManagePermissions && selectedCodes.size === 0)}
+                  title={
+                    canManagePermissions && selectedCodes.size === 0
+                      ? 'Select at least one permission'
+                      : ''
+                  }
                 >
                   {creating ? 'Creating…' : 'Create role'}
                 </button>
