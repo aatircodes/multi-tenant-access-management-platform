@@ -1,5 +1,5 @@
 import { useState, useEffect, useContext } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { AuthContext } from '../context/AuthContext';
 import Sidebar from '../components/Sidebar';
@@ -9,28 +9,51 @@ import styles from './RoleDetail.module.css';
 
 function RoleDetail() {
   const { roleId } = useParams();
+  const navigate = useNavigate();
   const { hasPermission } = useContext(AuthContext);
 
   const [role, setRole] = useState(null);
   const [grantedCodes, setGrantedCodes] = useState(new Set());
+  const [permissionIdByCode, setPermissionIdByCode] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [togglingCode, setTogglingCode] = useState(null);
   const [toggleError, setToggleError] = useState('');
 
-  const canAssign = hasPermission('ROLE_ASSIGN');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  // Toggling a permission calls POST/DELETE /roles/{roleId}/permissions/{permissionId},
+  // gated on PERMISSION_MANAGE (renamed/split from ROLE_ASSIGN).
+  const canManagePermissions = hasPermission('PERMISSION_MANAGE');
+  // Deleting a role calls DELETE /api/roles/{roleId}, gated on its own ROLE_DELETE —
+  // no longer the same permission as ROLE_CREATE, despite the old comment here saying so.
+  const canDelete = hasPermission('ROLE_DELETE');
 
   const loadRole = async () => {
     setLoading(true);
     setError('');
     try {
-      const [rolesRes, permsRes] = await Promise.all([
-        axiosClient.get('/roles'),
-        axiosClient.get(`/roles/${roleId}/permissions`),
-      ]);
+      const rolesRes = await axiosClient.get('/roles');
       const matchedRole = rolesRes.data.find((r) => String(r.id) === String(roleId));
+      const adminRole = rolesRes.data.find((r) => r.name === 'Admin');
       setRole(matchedRole || null);
-      setGrantedCodes(new Set(permsRes.data.map((p) => p.code)));
+
+      const [thisRolePermsRes, adminPermsRes] = await Promise.all([
+        axiosClient.get(`/roles/${roleId}/permissions`),
+        adminRole
+          ? axiosClient.get(`/roles/${adminRole.id}/permissions`)
+          : Promise.resolve({ data: [] }),
+      ]);
+
+      setGrantedCodes(new Set(thisRolePermsRes.data.map((p) => p.code)));
+
+      const idMap = {};
+      adminPermsRes.data.forEach((p) => {
+        idMap[p.code] = p.id;
+      });
+      setPermissionIdByCode(idMap);
     } catch (err) {
       setError('Failed to load role details.');
     } finally {
@@ -44,42 +67,67 @@ function RoleDetail() {
   }, [roleId]);
 
   const isAdmin = role?.name === 'Admin';
+  const hasMembers = (role?.memberCount ?? 0) > 0;
+  const deleteDisabled = isAdmin || hasMembers || !canDelete;
 
-  const handleToggle = async (permission, currentlyGranted) => {
+  let deleteDisabledReason = '';
+  if (isAdmin) deleteDisabledReason = 'The Admin role cannot be deleted';
+  else if (hasMembers) deleteDisabledReason = 'Unassign all members from this role before deleting it';
+  else if (!canDelete) deleteDisabledReason = "You don't have permission to delete roles";
+
+  const handleToggle = async (code, currentlyGranted) => {
+    const permissionId = permissionIdByCode[code];
+    if (!permissionId) {
+      setToggleError('Could not resolve this permission. Please refresh and try again.');
+      return;
+    }
+
     setToggleError('');
-    setTogglingCode(permission.code);
+    setTogglingCode(code);
 
-    // Optimistic update — flip the switch immediately, roll back on failure
     setGrantedCodes((prev) => {
       const next = new Set(prev);
       if (currentlyGranted) {
-        next.delete(permission.code);
+        next.delete(code);
       } else {
-        next.add(permission.code);
+        next.add(code);
       }
       return next;
     });
 
     try {
       if (currentlyGranted) {
-        await axiosClient.delete(`/roles/${roleId}/permissions/${permission.id}`);
+        await axiosClient.delete(`/roles/${roleId}/permissions/${permissionId}`);
       } else {
-        await axiosClient.post(`/roles/${roleId}/permissions/${permission.id}`);
+        await axiosClient.post(`/roles/${roleId}/permissions/${permissionId}`);
       }
     } catch (err) {
-      // Roll back the optimistic change
       setGrantedCodes((prev) => {
         const next = new Set(prev);
         if (currentlyGranted) {
-          next.add(permission.code);
+          next.add(code);
         } else {
-          next.delete(permission.code);
+          next.delete(code);
         }
         return next;
       });
-      setToggleError('Failed to update permission. Please try again.');
+      const backendMessage = err.response?.data?.message;
+      setToggleError(backendMessage || 'Failed to update permission. Please try again.');
     } finally {
       setTogglingCode(null);
+    }
+  };
+
+  const handleDeleteRole = async () => {
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await axiosClient.delete(`/roles/${roleId}`);
+      navigate('/roles');
+    } catch (err) {
+      const backendMessage = err.response?.data?.message;
+      setDeleteError(backendMessage || 'Failed to delete role. Please try again.');
+      setDeleting(false);
     }
   };
 
@@ -102,24 +150,36 @@ function RoleDetail() {
               <div className={styles.roleError}>Role not found.</div>
             ) : (
               <>
-                <div className={styles.pageTitle}>
-                  {role.name}
-                  {isAdmin && <span className={styles.lockedTag}>LOCKED</span>}
-                </div>
-                <div className={styles.pageSubtitle}>
-                  {isAdmin
-                    ? 'Admin has full access by default and cannot be changed.'
-                    : 'Toggle which permissions this role grants.'}
+                <div className={styles.pageHeaderRow}>
+                  <div>
+                    <div className={styles.pageTitle}>
+                      {role.name}
+                      {isAdmin && <span className={styles.lockedTag}>LOCKED</span>}
+                    </div>
+                    <div className={styles.pageSubtitle}>
+                      {isAdmin
+                        ? 'Admin has full access by default and cannot be changed.'
+                        : 'Toggle which permissions this role grants.'}
+                    </div>
+                  </div>
+                  {!isAdmin && canDelete && (
+                    <button
+                      type="button"
+                      className={styles.btnDeleteRole}
+                      disabled={deleteDisabled}
+                      title={deleteDisabledReason}
+                      onClick={() => setShowDeleteModal(true)}
+                    >
+                      Delete role
+                    </button>
+                  )}
                 </div>
 
                 <div className={styles.card}>
                   {ALL_PERMISSIONS.map((permission) => {
-                    // Look up the real permission ID from what the backend actually returned
-                    // for this role, since ALL_PERMISSIONS (the fixed catalog) only has codes —
-                    // the numeric ID needed for the assign/remove endpoints comes from the API.
                     const granted = grantedCodes.has(permission.code);
                     const isToggling = togglingCode === permission.code;
-                    const switchDisabled = isAdmin || !canAssign || isToggling;
+                    const switchDisabled = isAdmin || !canManagePermissions || isToggling;
 
                     return (
                       <div className={styles.permRow} key={permission.code}>
@@ -132,12 +192,7 @@ function RoleDetail() {
                             type="checkbox"
                             checked={granted}
                             disabled={switchDisabled}
-                            onChange={() =>
-                              handleToggle(
-                                { code: permission.code, id: resolvePermissionId(permission.code) },
-                                granted
-                              )
-                            }
+                            onChange={() => handleToggle(permission.code, granted)}
                           />
                           <span className={styles.slider}></span>
                         </label>
@@ -162,39 +217,54 @@ function RoleDetail() {
                     </div>
                   </>
                 ) : (
-                  !canAssign && (
+                  <>
+                    {!canManagePermissions && (
+                      <div className={styles.saveNote}>
+                        You don't have permission to modify role permissions.
+                      </div>
+                    )}
                     <div className={styles.saveNote}>
-                      You don't have permission to modify role permissions.
+                      To remove this role's last permission, delete the role itself instead.
                     </div>
-                  )
+                  </>
                 )}
               </>
             )}
           </div>
         </div>
       </div>
+
+      {showDeleteModal && (
+        <div className={styles.modalOverlay} onClick={() => !deleting && setShowDeleteModal(false)}>
+          <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalTitle}>Delete role</div>
+            <div className={styles.modalBody}>
+              Are you sure you want to delete <strong>{role?.name}</strong>? This cannot be undone.
+            </div>
+            {deleteError && <div className={styles.toggleError} style={{ marginBottom: 16 }}>{deleteError}</div>}
+            <div className={styles.modalActions}>
+              <button
+                type="button"
+                className={styles.btnSecondary}
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={styles.btnDangerSolid}
+                onClick={handleDeleteRole}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Delete role'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
-
-// Permission IDs (1-9) are fixed and stable per the backend's documented closed catalog —
-// they match the order GET /api/roles/{roleId}/permissions returns for a role holding all 9
-// (e.g. Admin), which the app has already observed. Hardcoded alongside ALL_PERMISSIONS since
-// both describe the same fixed, unchanging catalog.
-const PERMISSION_ID_BY_CODE = {
-  RESOURCE_CREATE: 1,
-  RESOURCE_READ: 2,
-  RESOURCE_UPDATE: 3,
-  RESOURCE_DELETE: 4,
-  ROLE_CREATE: 5,
-  ROLE_READ: 6,
-  ROLE_ASSIGN: 7,
-  USER_INVITE: 8,
-  AUDIT_VIEW: 9,
-};
-
-function resolvePermissionId(code) {
-  return PERMISSION_ID_BY_CODE[code];
 }
 
 export default RoleDetail;
