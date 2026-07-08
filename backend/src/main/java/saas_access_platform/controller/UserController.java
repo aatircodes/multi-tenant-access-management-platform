@@ -23,13 +23,13 @@ public class UserController {
     }
 
     @GetMapping
-    @PreAuthorize("hasPermission(null, 'ROLE_READ')")
+    @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'ROLE_MANAGE') or hasPermission(null, 'ADMIN_TRANSFER')")   // widened
     public ResponseEntity<List<UserResponse>> getAllUsers() {
         return ResponseEntity.ok(userService.getAllUsers());
     }
 
     @PatchMapping("/{userId}/deactivate")
-    @PreAuthorize("hasPermission(null, 'USER_INVITE')")
+    @PreAuthorize("hasPermission(null, 'USER_DEACTIVATE')")   // was USER_INVITE
     public ResponseEntity<Void> deactivateUser(@PathVariable Long userId) {
         userService.deactivateUser(userId);
         return ResponseEntity.noContent().build();
