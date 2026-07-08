@@ -1,10 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useContext } from 'react';
 import axiosClient from '../api/axiosClient';
+import { AuthContext } from '../context/AuthContext';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
 import styles from './Invitations.module.css';
 
 function Invitations() {
+  const { hasPermission } = useContext(AuthContext);
+  // Send, list, and revoke are all gated on USER_INVITE (matches
+  // POST /invitations, GET /invitations, DELETE /invitations/{id} on the backend —
+  // revoke stays bundled into USER_INVITE per the earlier design decision).
+  const canManageInvites = hasPermission('USER_INVITE');
+
   const [roles, setRoles] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -125,34 +132,46 @@ function Invitations() {
 
             {error && <div className={styles.invitationsError}>{error}</div>}
 
-            <div className={`${styles.card} ${styles.inviteCard}`}>
-              <form className={styles.inviteRow} onSubmit={handleSendInvite}>
-                <div className={styles.field}>
-                  <label>Email address</label>
-                  <input
-                    type="email"
-                    placeholder="colleague@company.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                  />
+            {canManageInvites ? (
+              <div className={`${styles.card} ${styles.inviteCard}`}>
+                <form className={styles.inviteRow} onSubmit={handleSendInvite}>
+                  <div className={styles.field}>
+                    <label>Email address</label>
+                    <input
+                      type="email"
+                      placeholder="colleague@company.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className={`${styles.field} ${styles.fieldRole}`}>
+                    <label>Role</label>
+                    <select value={roleId} onChange={(e) => setRoleId(e.target.value)} required disabled={roles.length === 0}>
+                      {roles.length === 0 ? (
+                        <option value="">No roles created yet</option>
+                      ) : (
+                        roles.map((role) => (
+                          <option key={role.id} value={role.id}>
+                            {role.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                  <button type="submit" className={styles.btnPrimary} disabled={sending || !roleId || roles.length === 0}>
+                    {sending ? 'Sending…' : 'Send invite'}
+                  </button>
+                </form>
+                {sendError && <div className={styles.sendError}>{sendError}</div>}
+              </div>
+            ) : (
+              <div className={styles.card}>
+                <div className={styles.emptyState}>
+                  You don't have permission to send invitations.
                 </div>
-                <div className={`${styles.field} ${styles.fieldRole}`}>
-                  <label>Role</label>
-                  <select value={roleId} onChange={(e) => setRoleId(e.target.value)} required>
-                    {roles.map((role) => (
-                      <option key={role.id} value={role.id}>
-                        {role.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <button type="submit" className={styles.btnPrimary} disabled={sending || !roleId}>
-                  {sending ? 'Sending…' : 'Send invite'}
-                </button>
-              </form>
-              {sendError && <div className={styles.sendError}>{sendError}</div>}
-            </div>
+              </div>
+            )}
 
             <div className={styles.sectionLabel}>Pending invitations</div>
             {loading ? (
@@ -182,14 +201,16 @@ function Invitations() {
                         >
                           Copy invite link
                         </button>
-                        <button
-                          type="button"
-                          className={styles.revokeBtn}
-                          onClick={() => handleRevoke(inv.id)}
-                          disabled={revokingId === inv.id}
-                        >
-                          {revokingId === inv.id ? 'Revoking…' : 'Revoke'}
-                        </button>
+                        {canManageInvites && (
+                          <button
+                            type="button"
+                            className={styles.revokeBtn}
+                            onClick={() => handleRevoke(inv.id)}
+                            disabled={revokingId === inv.id}
+                          >
+                            {revokingId === inv.id ? 'Revoking…' : 'Revoke'}
+                          </button>
+                        )}
                       </div>
                     </div>
                     {visibleLinkId === inv.id && (
