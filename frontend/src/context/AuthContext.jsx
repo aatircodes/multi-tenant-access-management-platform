@@ -24,33 +24,19 @@ export function AuthProvider({ children }) {
   const [permissions, setPermissions] = useState([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
 
-  // Resolves the current user's merged permission set from their role names
-  const loadPermissions = useCallback(async (roleNames) => {
-    if (!roleNames || roleNames.length === 0) {
-      setPermissions([]);
-      return;
-    }
+  // Resolves the current user's merged permission set directly from the backend.
+  // This calls GET /users/me-permissions, which has no permission gate of its own
+  // (self-lookup only) — it exists specifically so that permission resolution
+  // itself never depends on already having a specific permission. The previous
+  // approach (GET /roles + per-role GET /roles/{id}/permissions) required
+  // ROLE_READ just to find out what permissions you had, which meant any user
+  // without ROLE_READ got a 403, and this catch block silently zeroed out
+  // their entire permission set — including permissions they DID have.
+  const loadPermissions = useCallback(async () => {
     setPermissionsLoading(true);
     try {
-      const rolesResponse = await axiosClient.get('/roles');
-      const allRoles = rolesResponse.data;
-
-      const matchedRoleIds = allRoles
-        .filter((role) => roleNames.includes(role.name))
-        .map((role) => role.id);
-
-      const permissionLists = await Promise.all(
-        matchedRoleIds.map((roleId) =>
-          axiosClient.get(`/roles/${roleId}/permissions`).then((res) => res.data)
-        )
-      );
-
-      const mergedCodes = new Set();
-      permissionLists.forEach((list) => {
-        list.forEach((perm) => mergedCodes.add(perm.code));
-      });
-
-      setPermissions(Array.from(mergedCodes));
+      const response = await axiosClient.get('/users/me-permissions');
+      setPermissions(response.data);
     } catch (err) {
       console.error('Failed to load permissions', err);
       setPermissions([]);
@@ -64,9 +50,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem('token', token);
       const decoded = decodeToken(token);
       setClaims(decoded);
-      if (decoded?.roles) {
-        loadPermissions(decoded.roles);
-      }
+      loadPermissions();
     } else {
       localStorage.removeItem('token');
       setClaims(null);
@@ -84,6 +68,8 @@ export function AuthProvider({ children }) {
 
   const hasPermission = (code) => permissions.includes(code);
 
+  const hasAnyPermission = (codes) => codes.some((code) => permissions.includes(code));
+
   const value = {
     token,
     claims,
@@ -91,6 +77,7 @@ export function AuthProvider({ children }) {
     permissionsLoading,
     isAuthenticated: !!token,
     hasPermission,
+    hasAnyPermission,
     login,
     logout,
   };
