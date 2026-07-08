@@ -32,7 +32,9 @@ function RolesList() {
 
   // Assigning a permission during role creation calls POST /roles/{roleId}/permissions/{permissionId},
   // gated on PERMISSION_MANAGE — a separate permission from ROLE_CREATE. A user without it can still
-  // create a role, just not with any permissions attached from this modal.
+  // create a role, just not with any permissions attached from this modal. A role with zero
+  // permissions is a valid, ordinary state — it can be filled in later by whoever holds
+  // PERMISSION_MANAGE, from the role detail screen.
   const canManagePermissions = hasPermission('PERMISSION_MANAGE');
 
   // Authoritative code -> id map, resolved from the Admin role (which always holds every
@@ -100,9 +102,10 @@ function RolesList() {
       const createRes = await axiosClient.post('/roles', { name: newRoleName });
       const newRoleId = createRes.data.id;
 
-      // Assign each selected permission in sequence. If one fails partway through, the role
-      // still exists with whichever permissions succeeded — surfaced via the error message
-      // below rather than silently losing track of a partial result.
+      // Assign each selected permission in sequence (there may be zero — that's fine, a role
+      // can exist with no permissions and be configured later). If one fails partway through,
+      // the role still exists with whichever permissions succeeded — surfaced via the error
+      // message below rather than silently losing track of a partial result.
       const codesToAssign = Array.from(selectedCodes);
       for (const code of codesToAssign) {
         const permissionId = permissionIdByCode[code];
@@ -200,17 +203,11 @@ function RolesList() {
                 />
               </div>
 
-              <div className={styles.sectionLabel}>
-                Permissions
-                {canManagePermissions && (
-                  <span style={{ fontWeight: 400, color: '#B45309' }}> — select at least one</span>
-                )}
-              </div>
+              <div className={styles.sectionLabel}>Permissions</div>
               {!canManagePermissions && (
                 <div className={styles.saveNote}>
                   You don't have permission to assign permissions. The role will be created
-                  without any — open it afterward to add permissions once someone with that
-                  permission does so.
+                  without any — someone with that permission can add them afterward.
                 </div>
               )}
               <div className={styles.permList}>
@@ -243,16 +240,7 @@ function RolesList() {
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className={styles.btnPrimary}
-                  disabled={creating || (canManagePermissions && selectedCodes.size === 0)}
-                  title={
-                    canManagePermissions && selectedCodes.size === 0
-                      ? 'Select at least one permission'
-                      : ''
-                  }
-                >
+                <button type="submit" className={styles.btnPrimary} disabled={creating}>
                   {creating ? 'Creating…' : 'Create role'}
                 </button>
               </div>
