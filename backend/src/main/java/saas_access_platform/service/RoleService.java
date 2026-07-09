@@ -25,6 +25,14 @@ public class RoleService {
     private final PermissionRepository permissionRepository;
     private final RolePermissionRepository rolePermissionRepository;
 
+    // Admin (full access) and No Access (zero access) are both system-guaranteed
+    // roles, auto-bootstrapped per org at registration (see AuthService.registerOrg).
+    // Neither can have its permission set edited or be deleted — that symmetry is
+    // what makes "No Access" a safe, always-available landing spot for transferAdmin.
+    private boolean isSystemRole(String roleName) {
+        return roleName.equalsIgnoreCase("Admin") || roleName.equalsIgnoreCase("No Access");
+    }
+
     public RoleResponse createRole(CreateRoleRequest request) {
         CurrentUserContext currentUser = (CurrentUserContext)
                 SecurityContextHolder.getContext().getAuthentication().getPrincipal();
@@ -125,8 +133,8 @@ public class RoleService {
         Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
 
-        if (role.getName().equalsIgnoreCase("Admin")) {
-            throw new RuntimeException("Admin role permissions cannot be modified");
+        if (isSystemRole(role.getName())) {
+            throw new RuntimeException("System roles (Admin, No Access) cannot have their permissions modified");
         }
 
         // Verify permission exists
@@ -178,8 +186,8 @@ public class RoleService {
         Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
 
-        if (role.getName().equalsIgnoreCase("Admin")) {
-            throw new RuntimeException("Admin role permissions cannot be modified");
+        if (isSystemRole(role.getName())) {
+            throw new RuntimeException("System roles (Admin, No Access) cannot have their permissions modified");
         }
 
         Permission permission = permissionRepository.findById(permissionId)
@@ -202,6 +210,9 @@ public class RoleService {
         Role adminRole = roleRepository.findByNameAndOrgId("Admin", orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("Admin role not found"));
 
+        Role noAccessRole = roleRepository.findByNameAndOrgId("No Access", orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("No Access role not found"));
+
         boolean callerIsAdmin = userRoleRepository
                 .existsByUserIdAndRoleId(currentUser.getUserId(), adminRole.getId());
         if (!callerIsAdmin) {
@@ -215,6 +226,18 @@ public class RoleService {
         User newAdmin = userRepository.findByIdAndOrgId(newUserId, orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
+        // Assign the outgoing Admin their fallback role FIRST, before removing
+        // Admin — this guarantees they never pass through a zero-role state,
+        // closing the gap that previously bypassed unassignRoleFromUser's
+        // "must have at least one role" guard.
+        if (!userRoleRepository.existsByUserIdAndRoleId(currentUser.getUserId(), noAccessRole.getId())) {
+            UserRole fallbackRole = UserRole.builder()
+                    .userId(currentUser.getUserId())
+                    .roleId(noAccessRole.getId())
+                    .build();
+            userRoleRepository.save(fallbackRole);
+        }
+
         // Demote current Admin
         userRoleRepository.deleteByUserIdAndRoleId(currentUser.getUserId(), adminRole.getId());
 
@@ -226,6 +249,13 @@ public class RoleService {
                     .build();
             userRoleRepository.save(newAdminUserRole);
         }
+
+        // If the new Admin happened to hold No Access (unlikely but possible —
+        // e.g. it was assigned manually), clean it up so they end up holding
+        // just Admin, not a redundant zero-permission role alongside it.
+        if (userRoleRepository.existsByUserIdAndRoleId(newAdmin.getId(), noAccessRole.getId())) {
+            userRoleRepository.deleteByUserIdAndRoleId(newAdmin.getId(), noAccessRole.getId());
+        }
     }
 
     @Transactional
@@ -236,8 +266,8 @@ public class RoleService {
         Role role = roleRepository.findByIdAndOrgId(roleId, currentUser.getOrgId())
                 .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
 
-        if (role.getName().equalsIgnoreCase("Admin")) {
-            throw new RuntimeException("Admin role cannot be deleted");
+        if (isSystemRole(role.getName())) {
+            throw new RuntimeException("System roles (Admin, No Access) cannot be deleted");
         }
 
         long memberCount = userRoleRepository.countByRoleId(role.getId());
