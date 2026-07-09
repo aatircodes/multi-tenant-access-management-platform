@@ -22,6 +22,11 @@ public class UserController {
         return ResponseEntity.ok(userService.getCurrentUserPermissions());
     }
 
+    @GetMapping("/me-roles")
+    public ResponseEntity<List<String>> getMyRoles() {
+        return ResponseEntity.ok(userService.getCurrentUserRoles());
+    }
+
     @GetMapping
     @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'ROLE_MANAGE') or hasPermission(null, 'ADMIN_TRANSFER')")   // widened
     public ResponseEntity<List<UserResponse>> getAllUsers() {

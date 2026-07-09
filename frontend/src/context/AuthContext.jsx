@@ -23,6 +23,7 @@ export function AuthProvider({ children }) {
   });
   const [permissions, setPermissions] = useState([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
+  const [roleNames, setRoleNames] = useState([]);
   const [organization, setOrganization] = useState(null);
   const [organizationLoading, setOrganizationLoading] = useState(false);
   const [organizationError, setOrganizationError] = useState(false);
@@ -45,6 +46,16 @@ export function AuthProvider({ children }) {
       setPermissions([]);
     } finally {
       setPermissionsLoading(false);
+    }
+  }, []);
+
+  const loadRoleNames = useCallback(async () => {
+    try {
+      const response = await axiosClient.get('/users/me-roles');
+      setRoleNames(response.data);
+    } catch (err) {
+      console.error('Failed to load role names', err);
+      setRoleNames([]);
     }
   }, []);
 
@@ -72,14 +83,16 @@ export function AuthProvider({ children }) {
       const decoded = decodeToken(token);
       setClaims(decoded);
       loadPermissions();
+      loadRoleNames();
       loadOrganization();
     } else {
       localStorage.removeItem('token');
       setClaims(null);
       setPermissions([]);
+      setRoleNames([]);
       setOrganization(null);
     }
-  }, [token, loadPermissions, loadOrganization]);
+  }, [token, loadPermissions, loadRoleNames, loadOrganization]);
 
   const login = (newToken) => {
     setToken(newToken);
@@ -98,6 +111,9 @@ export function AuthProvider({ children }) {
     claims,
     permissions,
     permissionsLoading,
+    loadPermissions,
+    roleNames,
+    loadRoleNames,
     organization,
     organizationLoading,
     organizationError,

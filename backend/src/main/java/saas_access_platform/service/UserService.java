@@ -46,6 +46,22 @@ public class UserService {
                 .toList();
     }
 
+    public List<String> getCurrentUserRoles() {
+        CurrentUserContext currentUser = (CurrentUserContext)
+                SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        List<Long> roleIds = userRoleRepository.findRoleIdsByUserId(currentUser.getUserId());
+
+        if (roleIds.isEmpty()) {
+            return List.of();
+        }
+
+        return roleRepository.findAllById(roleIds)
+                .stream()
+                .map(Role::getName)
+                .toList();
+    }
+
     public List<UserResponse> getAllUsers() {
         CurrentUserContext currentUser = (CurrentUserContext)
                 SecurityContextHolder.getContext().getAuthentication().getPrincipal();

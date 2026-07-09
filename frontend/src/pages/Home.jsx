@@ -7,7 +7,7 @@ import Topbar from '../components/Topbar';
 import './Home.css';
 
 function Home() {
-  const { claims, hasPermission, hasAnyPermission, organization, organizationError } =
+  const { claims, hasPermission, hasAnyPermission, organization, organizationError, roleNames } =
     useContext(AuthContext);
   const [usage, setUsage] = useState(null);
   const [users, setUsers] = useState([]);
@@ -97,7 +97,7 @@ function Home() {
 
   const rawName = claims?.sub ? claims.sub.split('@')[0] : 'there';
   const orgFirstName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-  const currentRole = claims?.roles?.[0] || '—';
+  const currentRole = roleNames?.[0] || '—';
 
   const formatDate = (isoString) => {
     if (!isoString) return '—';

@@ -26,7 +26,7 @@ public class RoleController {
     }
 
     @GetMapping
-    @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'ROLE_MANAGE') or hasPermission(null, 'PERMISSION_MANAGE') or hasPermission(null, 'ADMIN_TRANSFER')")
+    @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'ROLE_MANAGE') or hasPermission(null, 'PERMISSION_MANAGE') or hasPermission(null, 'ADMIN_TRANSFER') or hasPermission(null, 'ROLE_DELETE')")
     public ResponseEntity<List<RoleResponse>> getAllRoles() {
         return ResponseEntity.ok(roleService.getAllRoles());
     }

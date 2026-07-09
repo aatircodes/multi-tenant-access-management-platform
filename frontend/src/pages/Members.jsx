@@ -1,5 +1,4 @@
 import { useState, useEffect, useContext } from 'react';
-import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { AuthContext } from '../context/AuthContext';
 import Sidebar from '../components/Sidebar';
@@ -7,8 +6,7 @@ import Topbar from '../components/Topbar';
 import styles from './Members.module.css';
 
 function Members() {
-  const { claims, logout, hasPermission } = useContext(AuthContext);
-  const navigate = useNavigate();
+  const { claims, hasPermission, loadPermissions, loadRoleNames } = useContext(AuthContext);
   const currentUserId = claims?.userId;
 
   // Assign/unassign role — POST /roles/{roleId}/assign/{userId} and
@@ -98,12 +96,15 @@ function Members() {
         await loadUsers();
       } else if (modalType === 'transfer') {
         await axiosClient.post(`/roles/transfer-admin/${modalTarget.id}`);
-        // The caller's own permission set just changed (they gave up Admin). Their existing
-        // JWT still claims the old role, so continuing to use it would cause every subsequent
-        // permission check to be silently wrong. Force a clean re-login instead.
-        logout();
-        navigate('/login');
-        return;
+        // Permission checks are resolved live against the DB on every request
+        // (see CustomPermissionEvaluator), so the caller doesn't need a forced
+        // re-login just because their access changed — refreshing the client's
+        // permission state is enough for the UI to correctly reflect their new
+        // (now empty) access immediately.
+        closeModal();
+        await loadPermissions();
+        await loadRoleNames();
+        await loadUsers();
       } else if (modalType === 'assign') {
         await axiosClient.post(`/roles/${selectedRoleId}/assign/${modalTarget.id}`);
         closeModal();
@@ -212,12 +213,20 @@ function Members() {
                         deactivateReason = 'You do not have permission to deactivate members';
                       }
 
+                      const isSystemRoleName = (roleName) =>
+                        roleName === 'Admin' || roleName === 'No Access';
+
                       const renderRoleTag = (roleName, isPopoverTag) => {
                         const isAdminTag = roleName === 'Admin';
+                        const isSystemTag = isSystemRoleName(roleName);
                         // Unassign calls DELETE /roles/{roleId}/unassign/{userId},
-                        // which is also gated on ROLE_MANAGE on the backend.
+                        // which is also gated on ROLE_MANAGE on the backend. System
+                        // roles (Admin, No Access) are excluded regardless of that
+                        // permission — Admin is handled via transfer-admin only, and
+                        // No Access is a backend-managed fallback, not something meant
+                        // to be manually assigned or removed through this screen.
                         const canRemove =
-                          !isAdminTag && !onlyOneRole && !isDisabled && canAssignRole;
+                          !isSystemTag && !onlyOneRole && !isDisabled && canAssignRole;
                         return (
                           <span
                             key={roleName}
@@ -227,6 +236,8 @@ function Members() {
                             title={
                               isAdminTag
                                 ? 'Admin is transferred, not removed'
+                                : roleName === 'No Access'
+                                ? 'No Access is managed automatically and cannot be edited here'
                                 : onlyOneRole
                                 ? 'User must have at least one role'
                                 : !canAssignRole
@@ -368,7 +379,7 @@ function Members() {
                   >
                     <option value="">Select a role…</option>
                     {roles
-                      .filter((r) => r.name !== 'Admin' && !modalTarget.roles.includes(r.name))
+                      .filter((r) => !['Admin', 'No Access'].includes(r.name) && !modalTarget.roles.includes(r.name))
                       .map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}
