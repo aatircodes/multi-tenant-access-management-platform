@@ -50,11 +50,26 @@ function RolesList() {
   const loadRoles = async () => {
     setLoading(true);
     setError('');
+
+    let rolesData;
     try {
       const rolesRes = await axiosClient.get('/roles');
-      setRoles(rolesRes.data);
+      rolesData = rolesRes.data;
+      setRoles(rolesData);
+    } catch (err) {
+      setError('Failed to load roles.');
+      setLoading(false);
+      return;
+    }
+    setLoading(false);
 
-      const adminRole = rolesRes.data.find((r) => r.name === 'Admin');
+    // Best-effort only: this powers the permission checkboxes in the
+    // create-role modal. A user without ROLE_READ/PERMISSION_MANAGE will
+    // 403 here — that's expected and shouldn't surface as a page error,
+    // since it doesn't affect the roles list itself. canManagePermissions
+    // already hides/disables the checkboxes for these users regardless.
+    try {
+      const adminRole = rolesData.find((r) => r.name === 'Admin');
       if (adminRole) {
         const adminPermsRes = await axiosClient.get(`/roles/${adminRole.id}/permissions`);
         const idMap = {};
@@ -64,9 +79,7 @@ function RolesList() {
         setPermissionIdByCode(idMap);
       }
     } catch (err) {
-      setError('Failed to load roles.');
-    } finally {
-      setLoading(false);
+      // Silently ignore — permissionIdByCode just stays {}.
     }
   };
 
