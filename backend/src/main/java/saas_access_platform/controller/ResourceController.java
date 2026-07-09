@@ -30,7 +30,7 @@ public class ResourceController {
     }
 
     @GetMapping
-    @PreAuthorize("hasPermission(null, 'RESOURCE_READ') or hasPermission(null, 'RESOURCE_UPDATE') or hasPermission(null, 'RESOURCE_DELETE')")
+    @PreAuthorize("hasPermission(null, 'RESOURCE_READ') or hasPermission(null, 'RESOURCE_UPDATE') or hasPermission(null, 'RESOURCE_DELETE') or hasPermission(null, 'RESOURCE_CREATE')")
     public ResponseEntity<Page<Resource>> getAllResources(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {

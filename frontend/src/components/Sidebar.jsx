@@ -5,7 +5,7 @@ import './Sidebar.css';
 
 const NAV_ITEMS = [
   { key: 'home', label: 'Home', path: '/home', permissions: [] },
-  { key: 'resources', label: 'Resources', path: '/resources', permissions: ['RESOURCE_READ', 'RESOURCE_UPDATE', 'RESOURCE_DELETE'] },
+  { key: 'resources', label: 'Resources', path: '/resources', permissions: ['RESOURCE_READ', 'RESOURCE_UPDATE', 'RESOURCE_DELETE', 'RESOURCE_CREATE'] },
   { key: 'roles', label: 'Roles & Permissions', path: '/roles', permissions: ['ROLE_READ', 'ROLE_MANAGE', 'PERMISSION_MANAGE', 'ADMIN_TRANSFER', 'ROLE_DELETE', 'ROLE_CREATE'] },
   { key: 'invitations', label: 'Invitations', path: '/invitations', permissions: ['USER_INVITE'] },
   { key: 'members', label: 'Members', path: '/members', permissions: ['ROLE_READ', 'ROLE_MANAGE', 'ADMIN_TRANSFER', 'USER_DEACTIVATE'] },

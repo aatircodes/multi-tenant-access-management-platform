@@ -41,16 +41,27 @@ function Members() {
     setLoading(true);
     setError('');
     try {
-      const [usersRes, rolesRes] = await Promise.all([
-        axiosClient.get('/users'),
-        axiosClient.get('/roles'),
-      ]);
+      const usersRes = await axiosClient.get('/users');
       setUsers(usersRes.data);
-      setRoles(rolesRes.data);
     } catch (err) {
       setError('Failed to load members.');
-    } finally {
       setLoading(false);
+      return;
+    }
+    setLoading(false);
+
+    // Best-effort only: this populates the role-name options in the
+    // assign-role dropdown. A user without any of ROLE_READ/ROLE_MANAGE/
+    // PERMISSION_MANAGE/ADMIN_TRANSFER/ROLE_DELETE/ROLE_CREATE (e.g. someone
+    // holding only USER_DEACTIVATE) will 403 here — that's correct, and
+    // shouldn't block viewing the member list itself. It just means the
+    // assign-role dropdown will show no options for them, which is already
+    // effectively true since canAssignRole gates that feature separately.
+    try {
+      const rolesRes = await axiosClient.get('/roles');
+      setRoles(rolesRes.data);
+    } catch (err) {
+      // Silently ignore — roles just stays [].
     }
   };
 
@@ -230,19 +241,18 @@ function Members() {
                         return (
                           <span
                             key={roleName}
-                            className={`${styles.roleTag} ${isAdminTag ? styles.roleTagAdmin : ''} ${
-                              canRemove ? styles.roleTagRemovable : ''
-                            }`}
+                            className={`${styles.roleTag} ${isAdminTag ? styles.roleTagAdmin : ''} ${canRemove ? styles.roleTagRemovable : ''
+                              }`}
                             title={
                               isAdminTag
                                 ? 'Admin is transferred, not removed'
                                 : roleName === 'No Access'
-                                ? 'No Access is managed automatically and cannot be edited here'
-                                : onlyOneRole
-                                ? 'User must have at least one role'
-                                : !canAssignRole
-                                ? 'You do not have permission to unassign roles'
-                                : ''
+                                  ? 'No Access is managed automatically and cannot be edited here'
+                                  : onlyOneRole
+                                    ? 'User must have at least one role'
+                                    : !canAssignRole
+                                      ? 'You do not have permission to unassign roles'
+                                      : ''
                             }
                           >
                             {roleName}
@@ -291,9 +301,8 @@ function Members() {
                           </td>
                           <td>
                             <span
-                              className={`${styles.statusBadge} ${
-                                isDisabled ? styles.statusDisabled : styles.statusActive
-                              }`}
+                              className={`${styles.statusBadge} ${isDisabled ? styles.statusDisabled : styles.statusActive
+                                }`}
                             >
                               {isDisabled ? 'Deactivated' : 'Active'}
                             </span>
