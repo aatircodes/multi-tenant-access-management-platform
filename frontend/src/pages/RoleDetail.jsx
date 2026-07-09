@@ -17,6 +17,7 @@ function RoleDetail() {
   const [permissionIdByCode, setPermissionIdByCode] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [permissionsViewDenied, setPermissionsViewDenied] = useState(false);
   const [togglingCode, setTogglingCode] = useState(null);
   const [toggleError, setToggleError] = useState('');
 
@@ -34,26 +35,43 @@ function RoleDetail() {
   const loadRole = async () => {
     setLoading(true);
     setError('');
+    setPermissionsViewDenied(false);
     try {
       const rolesRes = await axiosClient.get('/roles');
       const matchedRole = rolesRes.data.find((r) => String(r.id) === String(roleId));
       const adminRole = rolesRes.data.find((r) => r.name === 'Admin');
       setRole(matchedRole || null);
 
-      const [thisRolePermsRes, adminPermsRes] = await Promise.all([
+      if (!matchedRole) {
+        setLoading(false);
+        return;
+      }
+
+      const [thisRoleResult, adminResult] = await Promise.allSettled([
         axiosClient.get(`/roles/${roleId}/permissions`),
         adminRole
           ? axiosClient.get(`/roles/${adminRole.id}/permissions`)
           : Promise.resolve({ data: [] }),
       ]);
 
-      setGrantedCodes(new Set(thisRolePermsRes.data.map((p) => p.code)));
+      if (thisRoleResult.status === 'fulfilled') {
+        setGrantedCodes(new Set(thisRoleResult.value.data.map((p) => p.code)));
+      } else {
+        // 403 — user lacks ROLE_READ/PERMISSION_MANAGE. Don't render an
+        // empty Set as "no permissions"; show an explicit denied state instead.
+        setPermissionsViewDenied(true);
+      }
 
-      const idMap = {};
-      adminPermsRes.data.forEach((p) => {
-        idMap[p.code] = p.id;
-      });
-      setPermissionIdByCode(idMap);
+      if (adminResult.status === 'fulfilled') {
+        const idMap = {};
+        adminResult.value.data.forEach((p) => {
+          idMap[p.code] = p.id;
+        });
+        setPermissionIdByCode(idMap);
+      }
+      // If adminResult rejected, permissionIdByCode just stays {} — toggling
+      // is already gated by canManagePermissions, so this only silently
+      // disables toggling for an edge case, never shows wrong data.
     } catch (err) {
       setError('Failed to load role details.');
     } finally {
@@ -175,53 +193,63 @@ function RoleDetail() {
                   )}
                 </div>
 
-                <div className={styles.card}>
-                  {ALL_PERMISSIONS.map((permission) => {
-                    const granted = grantedCodes.has(permission.code);
-                    const isToggling = togglingCode === permission.code;
-                    const switchDisabled = isAdmin || !canManagePermissions || isToggling;
-
-                    return (
-                      <div className={styles.permRow} key={permission.code}>
-                        <div className={styles.permLeft}>
-                          <div className={styles.permCode}>{permission.code}</div>
-                          <div className={styles.permDesc}>{permission.description}</div>
-                        </div>
-                        <label className={styles.switch}>
-                          <input
-                            type="checkbox"
-                            checked={granted}
-                            disabled={switchDisabled}
-                            onChange={() => handleToggle(permission.code, granted)}
-                          />
-                          <span className={styles.slider}></span>
-                        </label>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {toggleError && <div className={styles.toggleError}>{toggleError}</div>}
-
-                {isAdmin ? (
-                  <>
+                {permissionsViewDenied ? (
+                  <div className={styles.card}>
                     <div className={styles.saveNote}>
-                      Admin permissions are fixed and cannot be toggled.
+                      You don't have permission to view this role's permissions.
                     </div>
-                    <div className={styles.pointerNote}>
-                      <div className={styles.pointerNoteIcon}>i</div>
-                      <div className={styles.pointerNoteText}>
-                        To transfer admin rights to another member, go to{' '}
-                        <Link to="/members">Members</Link>.
-                      </div>
-                    </div>
-                  </>
+                  </div>
                 ) : (
-                  !canManagePermissions && (
-                    <div className={styles.saveNote}>
-                      You don't have permission to modify role permissions.
+                  <>
+                    <div className={styles.card}>
+                      {ALL_PERMISSIONS.map((permission) => {
+                        const granted = grantedCodes.has(permission.code);
+                        const isToggling = togglingCode === permission.code;
+                        const switchDisabled = isAdmin || !canManagePermissions || isToggling;
+
+                        return (
+                          <div className={styles.permRow} key={permission.code}>
+                            <div className={styles.permLeft}>
+                              <div className={styles.permCode}>{permission.code}</div>
+                              <div className={styles.permDesc}>{permission.description}</div>
+                            </div>
+                            <label className={styles.switch}>
+                              <input
+                                type="checkbox"
+                                checked={granted}
+                                disabled={switchDisabled}
+                                onChange={() => handleToggle(permission.code, granted)}
+                              />
+                              <span className={styles.slider}></span>
+                            </label>
+                          </div>
+                        );
+                      })}
                     </div>
-                  )
+
+                    {toggleError && <div className={styles.toggleError}>{toggleError}</div>}
+
+                    {isAdmin ? (
+                      <>
+                        <div className={styles.saveNote}>
+                          Admin permissions are fixed and cannot be toggled.
+                        </div>
+                        <div className={styles.pointerNote}>
+                          <div className={styles.pointerNoteIcon}>i</div>
+                          <div className={styles.pointerNoteText}>
+                            To transfer admin rights to another member, go to{' '}
+                            <Link to="/members">Members</Link>.
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      !canManagePermissions && (
+                        <div className={styles.saveNote}>
+                          You don't have permission to modify role permissions.
+                        </div>
+                      )
+                    )}
+                  </>
                 )}
               </>
             )}
