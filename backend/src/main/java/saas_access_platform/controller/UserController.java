@@ -28,7 +28,7 @@ public class UserController {
     }
 
     @GetMapping
-    @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'ROLE_MANAGE') or hasPermission(null, 'ADMIN_TRANSFER')")   // widened
+    @PreAuthorize("hasPermission(null, 'ROLE_READ') or hasPermission(null, 'ROLE_MANAGE') or hasPermission(null, 'ADMIN_TRANSFER') or hasPermission(null, 'USER_DEACTIVATE')")   // widened
     public ResponseEntity<List<UserResponse>> getAllUsers() {
         return ResponseEntity.ok(userService.getAllUsers());
     }
