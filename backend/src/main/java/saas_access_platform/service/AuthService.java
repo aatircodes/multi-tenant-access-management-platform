@@ -77,6 +77,17 @@ public class AuthService {
             );
         }
 
+        Role noAccessRole = Role.builder()
+                .orgId(org.getId())
+                .name("No Access")
+                .build();
+        roleRepository.save(noAccessRole);
+        // Deliberately zero permissions assigned — this is the system-guaranteed
+        // fallback role, symmetric to Admin. Every org gets both from registration
+        // onward: Admin (all permissions, fixed) and No Access (zero permissions,
+        // fixed). Used as the landing role for an outgoing Admin after transferAdmin,
+        // so no user can ever end up with zero roles through that path.
+
         User adminUser = User.builder()
                 .orgId(org.getId())
                 .email(request.getAdminEmail())
