@@ -1,9 +1,14 @@
 .idea/
+.vscode/
+
 backend/target/
-backend/.mvn/
 frontend/node_modules/
 frontend/dist/
+
 *.class
-.env
-.DS_Store
 *.log
+
+.env
+
+.DS_Store
+Thumbs.db
