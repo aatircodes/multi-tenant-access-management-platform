@@ -45,6 +45,7 @@ function Resources() {
   const canCreate = hasPermission('RESOURCE_CREATE');
   const canUpdate = hasPermission('RESOURCE_UPDATE');
   const canDelete = hasPermission('RESOURCE_DELETE');
+  const canViewList = hasPermission('RESOURCE_READ');
 
   const loadOwnerMap = useCallback(async () => {
     const result = await Promise.allSettled([axiosClient.get('/users/basic-info')]);
@@ -267,114 +268,126 @@ function Resources() {
               </div>
             )}
 
-            <div className={styles.searchRow}>
-              <input
-                className={styles.searchInput}
-                type="text"
-                placeholder="Search resources by name…"
-                value={searchTerm}
-                onChange={handleSearchChange}
-              />
-            </div>
+            {canViewList ? (
+              <>
+                <div className={styles.searchRow}>
+                  <input
+                    className={styles.searchInput}
+                    type="text"
+                    placeholder="Search resources by name…"
+                    value={searchTerm}
+                    onChange={handleSearchChange}
+                  />
+                </div>
 
-            {error && <div className={styles.formError}>{error}</div>}
+                {error && <div className={styles.formError}>{error}</div>}
 
-            <div className={styles.card}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Owner</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading && (
-                    <tr>
-                      <td colSpan="3" className={styles.emptyRow}>
-                        Loading…
-                      </td>
-                    </tr>
-                  )}
-                  {!loading && resources.length === 0 && (
-                    <tr>
-                      <td colSpan="3" className={styles.emptyRow}>
-                        No resources found.
-                      </td>
-                    </tr>
-                  )}
-                  {!loading &&
-                    resources.map((resource) => (
-                      <tr key={resource.id}>
-                        <td>
-                          <div className={styles.resName}>{resource.name}</div>
-                          {resource.description && (
-                            <div className={styles.resDesc}>{resource.description}</div>
-                          )}
-                        </td>
-                        <td className={styles.resOwner}>
-                          {ownerMap[resource.ownerUserId] || `User #${resource.ownerUserId}`}
-                        </td>
-                        <td>
-                          <div className={styles.rowActions}>
-                            {canUpdate && (
-                              <button
-                                className={styles.iconBtn}
-                                onClick={() => openEdit(resource)}
-                              >
-                                Edit
-                              </button>
-                            )}
-                            {canDelete && (
-                              <button
-                                className={`${styles.iconBtn} ${styles.danger}`}
-                                onClick={() => {
-                                  setDeletingResource(resource);
-                                  setDeleteError('');
-                                }}
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </div>
-                        </td>
+                <div className={styles.card}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Owner</th>
+                        <th style={{ textAlign: 'right' }}>Actions</th>
                       </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {loading && (
+                        <tr>
+                          <td colSpan="3" className={styles.emptyRow}>
+                            Loading…
+                          </td>
+                        </tr>
+                      )}
+                      {!loading && resources.length === 0 && (
+                        <tr>
+                          <td colSpan="3" className={styles.emptyRow}>
+                            No resources found.
+                          </td>
+                        </tr>
+                      )}
+                      {!loading &&
+                        resources.map((resource) => (
+                          <tr key={resource.id}>
+                            <td>
+                              <div className={styles.resName}>{resource.name}</div>
+                              {resource.description && (
+                                <div className={styles.resDesc}>{resource.description}</div>
+                              )}
+                            </td>
+                            <td className={styles.resOwner}>
+                              {ownerMap[resource.ownerUserId] || `User #${resource.ownerUserId}`}
+                            </td>
+                            <td>
+                              <div className={styles.rowActions}>
+                                {canUpdate && (
+                                  <button
+                                    className={styles.iconBtn}
+                                    onClick={() => openEdit(resource)}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                                {canDelete && (
+                                  <button
+                                    className={`${styles.iconBtn} ${styles.danger}`}
+                                    onClick={() => {
+                                      setDeletingResource(resource);
+                                      setDeleteError('');
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
 
-            {!isSearching && totalElements > 0 && (
-              <div className={styles.pagination}>
-                <div className={styles.paginationInfo}>
-                  Showing <b>{startItem}–{endItem}</b> of <b>{totalElements}</b> resources
+                {!isSearching && totalElements > 0 && (
+                  <div className={styles.pagination}>
+                    <div className={styles.paginationInfo}>
+                      Showing <b>{startItem}–{endItem}</b> of <b>{totalElements}</b> resources
+                    </div>
+                    <div className={styles.paginationControls}>
+                      <button
+                        className={styles.pageBtn}
+                        disabled={uiPage === 1}
+                        onClick={() => setUiPage(uiPage - 1)}
+                      >
+                        ‹ Prev
+                      </button>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                        <button
+                          key={p}
+                          className={`${styles.pageBtn} ${p === uiPage ? styles.active : ''}`}
+                          onClick={() => setUiPage(p)}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                      <button
+                        className={styles.pageBtn}
+                        disabled={uiPage === totalPages}
+                        onClick={() => setUiPage(uiPage + 1)}
+                      >
+                        Next ›
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              canCreate && (
+                <div className={styles.card}>
+                  <div className={styles.emptyRow}>
+                    You don't have permission to view the resource list, but you can still create new resources above.
+                  </div>
                 </div>
-                <div className={styles.paginationControls}>
-                  <button
-                    className={styles.pageBtn}
-                    disabled={uiPage === 1}
-                    onClick={() => setUiPage(uiPage - 1)}
-                  >
-                    ‹ Prev
-                  </button>
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                    <button
-                      key={p}
-                      className={`${styles.pageBtn} ${p === uiPage ? styles.active : ''}`}
-                      onClick={() => setUiPage(p)}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                  <button
-                    className={styles.pageBtn}
-                    disabled={uiPage === totalPages}
-                    onClick={() => setUiPage(uiPage + 1)}
-                  >
-                    Next ›
-                  </button>
-                </div>
-              </div>
+              )
             )}
           </div>
         </div>

@@ -7,7 +7,7 @@ import Topbar from '../components/Topbar';
 import './Home.css';
 
 function Home() {
-  const { claims, hasPermission, hasAnyPermission, organization, organizationError, roleNames } =
+  const { claims, hasPermission, hasAnyPermission, organization, organizationError, roleNames, permissionsLoading } =
     useContext(AuthContext);
   const [usage, setUsage] = useState(null);
   const [users, setUsers] = useState([]);
@@ -22,6 +22,7 @@ function Home() {
   const canViewMembers = hasAnyPermission(['ROLE_READ', 'ROLE_MANAGE', 'ADMIN_TRANSFER']);
 
   useEffect(() => {
+    if (permissionsLoading) return; // wait until permissions are resolved before deciding what to fetch
     async function loadDashboard() {
       setLoading(true);
       const errors = {};
@@ -66,7 +67,7 @@ function Home() {
     }
     loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [permissionsLoading]);
 
   const refreshUsage = useCallback(async () => {
     setRefreshingUsage(true);
