@@ -117,7 +117,9 @@ userId -> UserRole -> roleIds -> RolePermission -> permissionCode
 
 Enforced via a custom `PermissionEvaluator` wired into `@PreAuthorize("hasPermission(null, 'PERMISSION_CODE')")`.
 
-The 9 system-level permissions:
+The 13 system-level permissions (final, since Phase 6c — supersedes the original 9-permission
+catalog above; ROLE_ASSIGN was split three ways, and USER_DEACTIVATE was separated from
+USER_INVITE):
 
 | Code | Description |
 |---|---|
@@ -126,10 +128,18 @@ The 9 system-level permissions:
 | RESOURCE_UPDATE | Update resources |
 | RESOURCE_DELETE | Delete resources |
 | ROLE_CREATE | Create roles |
+| ROLE_DELETE | Delete roles |
 | ROLE_READ | Read roles |
-| ROLE_ASSIGN | Assign roles and permissions |
-| USER_INVITE | Invite users |
+| ROLE_MANAGE | Assign/unassign roles to and from users |
+| PERMISSION_MANAGE | Add/remove permissions on a role |
+| ADMIN_TRANSFER | Transfer admin ownership to another user |
+| USER_INVITE | Send, list, and revoke invitations |
+| USER_DEACTIVATE | Deactivate a user |
 | AUDIT_VIEW | View audit logs |
+
+A role may hold zero permissions (both at creation and after removing its last one) — this is
+deliberate, modeled on AWS IAM/K8s RBAC's empty-policy-object pattern, and every listing
+endpoint's OR-gate is designed so no permission is ever a dead end (see Phase 6c/7 below).
 
 ---
 
@@ -354,11 +364,16 @@ without needing to make a separate login call.
 | Method | Endpoint | Permission |
 |---|---|---|
 | POST | /api/resources | RESOURCE_CREATE |
-| GET | /api/resources | RESOURCE_READ |
+| GET | /api/resources | RESOURCE_READ or RESOURCE_UPDATE or RESOURCE_DELETE |
 | GET | /api/resources/{id} | RESOURCE_READ |
 | PUT | /api/resources/{id} | RESOURCE_UPDATE |
 | DELETE | /api/resources/{id} | RESOURCE_DELETE |
 | GET | /api/resources/search?name= | RESOURCE_READ |
+
+Note: RESOURCE_CREATE is deliberately NOT in the GET /api/resources gate — a
+RESOURCE_CREATE-only user can create but not view the list, matching the frontend, which never
+attempts this fetch for such a user (Resources.jsx gates the list/table on RESOURCE_READ
+independently of the create button). Confirmed by a dedicated regression test.
 
 **POST /api/resources**
 
@@ -453,12 +468,18 @@ this endpoint returns the full matching set.
 | Method | Endpoint | Permission |
 |---|---|---|
 | POST | /api/roles | ROLE_CREATE |
-| GET | /api/roles | ROLE_READ |
-| POST | /api/roles/{roleId}/assign/{userId} | ROLE_ASSIGN |
-| POST | /api/roles/{roleId}/permissions/{permissionId} | ROLE_ASSIGN |
-| DELETE | /api/roles/{roleId}/permissions/{permissionId} | ROLE_ASSIGN |
-| GET | /api/roles/{roleId}/permissions | ROLE_READ |
-| POST | /api/roles/transfer-admin/{newUserId} | ROLE_ASSIGN |
+| GET | /api/roles | ROLE_READ or ROLE_MANAGE or PERMISSION_MANAGE or ADMIN_TRANSFER or ROLE_DELETE or ROLE_CREATE or USER_INVITE |
+| POST | /api/roles/{roleId}/assign/{userId} | ROLE_MANAGE |
+| DELETE | /api/roles/{roleId}/unassign/{userId} | ROLE_MANAGE |
+| POST | /api/roles/{roleId}/permissions/{permissionId} | PERMISSION_MANAGE |
+| DELETE | /api/roles/{roleId}/permissions/{permissionId} | PERMISSION_MANAGE |
+| GET | /api/roles/{roleId}/permissions | ROLE_READ or PERMISSION_MANAGE |
+| POST | /api/roles/transfer-admin/{newUserId} | ADMIN_TRANSFER |
+| DELETE | /api/roles/{roleId} | ROLE_DELETE |
+
+`GET /api/roles` is deliberately the widest OR-gate in the system — every permission whose
+action targets a role by ID needs this page reachable, including USER_INVITE (to populate the
+invitation role-picker). See Phase 6c/7 below for why each of these was added.
 
 **POST /api/roles**
 
@@ -522,20 +543,31 @@ Response `204 No Content` — no body returned.
 
 ### Admin Role Governance
 
-The Admin role created at organization registration is subject to two invariants, enforced
-in `RoleService` rather than only in the frontend:
+Two system-guaranteed roles are bootstrapped per organization at registration: **Admin** (all
+13 permissions, immutable) and **No Access** (zero permissions, immutable) — added in Phase 6c
+as the landing role for an outgoing Admin after transfer. Both are subject to the same
+invariants, enforced in `RoleService`:
 
-**1. Admin's permission set is immutable.** `assignPermissionToRole` and
-`removePermissionFromRole` both reject any attempt to modify the Admin role's permissions
-with `400 "Admin role permissions cannot be modified"`. Admin always holds all 9 system
-permissions.
+**1. Both system roles' permission sets are immutable.** `assignPermissionToRole` and
+`removePermissionFromRole` reject any attempt to modify either role's permissions with
+`400 "System roles (Admin, No Access) cannot have their permissions modified"`.
 
-**2. There is exactly one Admin per organization, and it moves by transfer, not direct
-assignment.** `assignRoleToUser` rejects any attempt to assign the Admin role directly with
-`400 "Admin role cannot be assigned directly — use transfer-admin instead"`. The only way to
-change who holds Admin is `POST /api/roles/transfer-admin/{newUserId}`, which atomically
-demotes the caller and promotes the target inside a single `@Transactional` block — an
-organization can never end up with zero or multiple Admins, even under a partial failure.
+**2. Both system roles are undeletable.** `deleteRole` rejects deletion of either with
+`400 "System roles (Admin, No Access) cannot be deleted"`.
+
+**3. There is exactly one Admin per organization, and it moves by transfer, not direct
+assignment.** `assignRoleToUser`/`unassignRoleFromUser` reject any direct attempt to assign or
+remove the Admin role with `400`, directing the caller to transfer-admin instead.
+`POST /api/roles/transfer-admin/{newUserId}` atomically: assigns No Access to the outgoing
+admin (guaranteeing they never pass through a zero-role state), removes Admin from them, then
+promotes the target — all inside one `@Transactional` block.
+
+**No forced logout on transfer (changed in Phase 6c/7).** Earlier design forced the outgoing
+admin to re-login after a transfer (see the corresponding note in Design Decisions below, kept
+for historical context but no longer accurate). Since `CustomPermissionEvaluator` re-derives
+permissions live from the database on every request rather than trusting the JWT, this was
+found to be unnecessary friction — removed in favor of an in-place refresh
+(`AuthContext.loadPermissions()` + `loadRoleNames()`) immediately after a successful transfer.
 
 ---
 
@@ -623,10 +655,11 @@ Response `204 No Content` — no body returned.
 
 | Method | Endpoint | Permission |
 |---|---|---|
-| GET | /api/users | ROLE_READ |
+| GET | /api/users | ROLE_READ or ROLE_MANAGE or ADMIN_TRANSFER or USER_DEACTIVATE |
 | GET | /api/users/basic-info | None (self-serve, id + email only) |
 | GET | /api/users/me-permissions | None (self-serve, caller's own permissions only) |
-| PATCH | /api/users/{userId}/deactivate | USER_INVITE |
+| GET | /api/users/me-roles | None (self-serve, caller's own role names only — added Phase 6c/7) |
+| PATCH | /api/users/{userId}/deactivate | USER_DEACTIVATE |
 
 **GET /api/users**
 
@@ -1385,10 +1418,12 @@ why a piece of the interface disappeared.
 | 3 | RBAC — custom PermissionEvaluator, roles, permission assignment | Complete |
 | 4 | Invitations + Audit Log — invite flow, AuditAspect, audit log endpoint | Complete |
 | 5 | Rate Limiting — Redis, token bucket, atomic Lua script, usage endpoint | Complete |
-| 6a | Backend extensions — admin governance, deactivate-user, pagination, extended endpoints, full test pass (37 tests, 36 passed, 1 not independently testable) | Complete |
-| 6a | Frontend design — 10 screens designed and reviewed against the real API contract (Login, Register + Success, Home, Resources, Roles, Invitations, Members, Accept-Invitation, Audit log) | Complete |
+| 6a | Backend extensions — admin governance, deactivate-user, pagination, extended endpoints | Complete |
+| 6a | Frontend design — 10 screens designed and reviewed against the real API contract | Complete |
 | 6b | React Frontend — all nine screens built and tested end-to-end against the live backend | Complete |
-| 7 | Tests — additional coverage for edge cases the frontend surfaced | Pending |
+| 6c | Permission catalog redesign — 9 to 13 permissions, No Access system role, forced-logout removal | Complete |
+| 6c/7 | Manual QA + systematic RBAC audit — dead-end permission fixes, frontend/backend gate realignment | Complete |
+| 7 | Automated regression suite — JUnit + MockMvc against real containers, 22 tests | Complete |
 | 8 | Docker + Deploy — multi-stage Dockerfile, Render/Railway | Pending |
 
 **Backend additions made during Phase 6a** (surfaced by designing against the real API and
@@ -1591,47 +1626,111 @@ Resources and Audit log are now built and tested end-to-end, completing Phase 6b
 
 ## Known Issues & Open Questions
 
-These aren't bugs in the sense of broken code — the backend enforces every one of these
-correctly through `@PreAuthorize`. They're surprising consequences of how the nine fixed
-permission codes ended up scoped, found by mixing and matching permissions across custom roles
-rather than by automated testing. Both are pending a decision before Phase 7.
+Both open questions from this section as originally written (`USER_INVITE` bundling deactivate,
+and `ROLE_ASSIGN` having no reachable path) were resolved during the Phase 6c permission-catalog
+redesign and the subsequent Phase 6c/7 manual QA pass — see the new section below for full
+detail. This section is kept empty deliberately as a marker that the audit was completed, not
+abandoned.
 
-**`USER_INVITE` bundles invite and deactivate together.** `PATCH /api/users/{userId}/deactivate`
-is gated on `USER_INVITE`, the same permission that gates sending invitations. A role granted
-`USER_INVITE` can both invite new members and deactivate existing ones — there's currently no
-way to grant one without the other. Two directions are on the table: keep it as-is and just
-relabel the permission's UI description to something like "Can invite & deactivate users" so
-it's not misleading, or split it into a tenth permission (`USER_DEACTIVATE`) and migrate
-`deactivateUser`'s `@PreAuthorize` plus the matching frontend gate to match. The second is more
-correct long-term but changes the fixed permission catalog and would need a migration for any
-role that already assumed `USER_INVITE` covered deactivation. Not yet decided.
+---
 
-**`ROLE_ASSIGN` has no path to reach the action it grants.** A role holding `ROLE_ASSIGN` but
-not `ROLE_READ` can, in principle, call `POST /api/roles/{roleId}/assign/{userId}` — but has no
-way to actually get there. The sidebar gates the Members nav item on `ROLE_READ` alone, so the
-tab never even appears; and `Members.jsx` itself calls `GET /api/users` and `GET /api/roles`,
-both gated on `ROLE_READ`, so navigating there directly would just fail to load. That makes
-`ROLE_ASSIGN` alone functionally useless unless it's bundled with `ROLE_READ`. Two options here
-too: document "a role with `ROLE_ASSIGN` should also include `ROLE_READ`" as a prerequisite,
-enforced by convention the same way "every role needs at least one permission" already is; or
-loosen the gates so `ROLE_READ` **or** `ROLE_ASSIGN` satisfies both the sidebar's Members check
-and the backend's `GET /api/roles`/`GET /api/users` `@PreAuthorize`, making `ROLE_ASSIGN`
-self-sufficient on its own. Leaning toward the second, for consistency with how the
-`me-permissions`/`basic-info` fix already treats "a permission shouldn't be silently dependent
-on holding a different one to be useful" — but this isn't implemented yet, pending confirmation
-of whether `CustomPermissionEvaluator`'s SpEL setup supports an OR condition across two
-permission codes cleanly.
+---
 
-**The general pattern worth guarding against going forward:** every permission-model surprise
-found this session traces back to the same root cause — a frontend gate (or, in the case of
-`Members.jsx`, no gate at all) checking a different permission than the one the backend
-endpoint it's supposed to protect actually enforces, either because no one had wired a check in
-yet, or because a permission's name implied it covered more or less than its `@PreAuthorize`
-value really does. The rule going forward: before wiring any UI element to a backend call, look
-up that endpoint's exact `@PreAuthorize` string first, rather than inferring it from the
-endpoint's name or the permission's apparent purpose. A full pass across every action button on
-every screen, cross-checked against the real backend annotations, is planned before Phase 7
-testing begins.
+## Phase 6c — Permission Catalog Redesign
+
+The original 9-permission catalog was split for precision: `ROLE_ASSIGN` became three separate
+codes (`ROLE_MANAGE` for user↔role assignment, `PERMISSION_MANAGE` for permission↔role
+assignment, `ADMIN_TRANSFER` isolated as the highest-privilege action), `ROLE_CREATE`/
+`ROLE_DELETE` were split, and `USER_DEACTIVATE` was separated from `USER_INVITE`. The DB was
+dropped and reseeded. Three endpoints were widened to OR-gates immediately so no split
+permission was an obvious dead end at launch: `GET /api/roles`, `GET /api/roles/{roleId}/permissions`,
+`GET /api/users`.
+
+**No Access system role** introduced: zero permissions, undeletable, auto-bootstrapped
+alongside Admin at registration (`AuthService.registerOrg`) — see Admin Role Governance above
+for its role in `transferAdmin`.
+
+**Key design decision reconfirmed:** a role may hold zero permissions, even while still assigned
+to users — deliberate, not a bug, modeled on AWS IAM/K8s RBAC's empty-policy-object pattern.
+
+---
+
+## Phase 6c/7 — Manual QA and Systematic RBAC Audit
+
+A full end-to-end manual QA pass was conducted using single-permission test roles, verifying
+each of the 13 permissions independently as a real logged-in user, cross-checked against actual
+`@PreAuthorize` source (not assumptions) via Postman where UI behavior alone wasn't conclusive.
+
+**Bugs found and fixed:**
+
+1. **Coupled-fetch error banners.** `RolesList.jsx`, `RoleDetail.jsx`, and `Members.jsx` each
+   originally bundled a primary fetch with a secondary, differently-permissioned fetch inside
+   one `try/catch` or `Promise.all`. A 403 on the secondary call threw a blocking error banner
+   over an otherwise-working page, or (RoleDetail specifically) rendered an empty permission Set
+   as "every permission is off" — misleading, not just cosmetic. Fixed by decoupling the fetches
+   in all three files.
+2. **`transferAdmin` zero-role bug.** The outgoing admin was left with zero roles, silently
+   bypassing the "every user needs ≥1 role" invariant. Fixed via the No Access system role,
+   assigned before Admin is removed.
+3. **Dead-end permissions** — `ROLE_CREATE`, `ROLE_DELETE`, `USER_DEACTIVATE`, `USER_INVITE`
+   (for the invitation role-picker), and `RESOURCE_CREATE` were each, at various points, granted
+   but unreachable because their corresponding listing endpoint's OR-gate didn't include them.
+   Design rule established: in this single-page app, any permission whose only UI entry point
+   lives on a shared listing page needs that page's endpoint in its OR-gate — applies to
+   create/update/delete equally, not just actions on existing items (an earlier, narrower version
+   of this rule was tested and found incomplete). All confirmed fixed and covered by regression
+   tests, with one deliberate exception: `RESOURCE_CREATE` does NOT get read access — see
+   Resources endpoint table above.
+4. **`Sidebar.jsx` nav-permission drift.** `NAV_ITEMS` had fallen out of sync with the backend
+   OR-gate widenings above (pre-existing drift, not introduced this session). Realigned exactly.
+5. **`Home.jsx` dashboard-loading race condition.** The dashboard's `useEffect` ran before
+   `AuthContext`'s permissions finished loading (async), so `hasPermission('AUDIT_VIEW')` could
+   evaluate `false` at the moment the audit-log fetch decision was made, silently skipping it.
+   Fixed by gating the effect on `permissionsLoading`.
+
+**Confirmed correct, no changes needed (tested, not assumed):** Admin's dynamic full-permission
+bootstrap; backend guards blocking Admin-role reassignment via the general assign/unassign path
+(verified via raw Postman calls with a low-privilege JWT, not just UI hiding); `ROLE_READ` being
+able to view (not edit) a role's permissions; `PERMISSION_MANAGE` being able to empty an
+already-assigned role to zero permissions; `Members.jsx`'s "Assign role" staying enabled on
+Admin's row (the dangerous action is blocked at the dropdown-filtering/tag-removal level, not by
+disabling the whole row).
+
+**Known, accepted limitation, not fixed:** Audit log filtering (`AuditLog.jsx`) is client-side
+only, filtering within the currently loaded page — no server-side `action` query param exists.
+Documented in-code; judged out of scope.
+
+---
+
+## Phase 7 — Automated Regression Suite
+
+A targeted JUnit 5 + MockMvc suite (`RbacRegressionTest.java`, extending
+`BaseIntegrationTest.java`) runs against real local `tenant-platform-mysql`/`tenant-platform-redis`
+containers — no mocks, no Testcontainers — generating real JWTs via `JwtUtil` for
+repository-created test users, so requests pass through the actual filter chain
+(`JwtAuthFilter` → `RateLimitFilter` → `TenantFilter` → `@PreAuthorize` →
+`CustomPermissionEvaluator` → real DB) exactly like a live request.
+
+**Coverage (22 tests, all passing), mapped 1:1 to bugs found above rather than general coverage:**
+- Every permission with a listing-page dependency reaches it (parametrized across all affected
+  codes for `/api/roles`, `/api/users`, `/api/resources`)
+- An unrelated permission (`AUDIT_VIEW`) correctly cannot reach `/api/roles` — confirms the
+  OR-gate isn't accidentally wide open
+- `RESOURCE_CREATE` specifically cannot read the list but can still create — confirms the
+  deliberate exception above
+- `transferAdmin` leaves the outgoing admin holding exactly `No Access`, never zero roles; new
+  admin ends up holding `Admin`
+- Both system roles (`Admin`, `No Access`) reject permission modification and deletion attempts
+- A role can be emptied to zero permissions while still assigned (non-regression check on the
+  deliberate empty-role design)
+- A user's only remaining role cannot be unassigned via the normal path
+
+This suite is intentionally narrow — it exists to catch regressions of specific, real bugs
+found during manual QA, not as general test coverage. It already proved its value twice during
+development: once catching a genuine remaining dead-end (`RESOURCE_CREATE` on the resources
+list, before the deliberate-exception design was finalized), and once catching an incomplete
+test-setup helper (`createTestOrg()` initially not bootstrapping Admin/No Access the way
+`AuthService.registerOrg` does in production).
 
 ---
 
