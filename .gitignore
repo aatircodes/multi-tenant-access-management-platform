@@ -4,6 +4,7 @@
 backend/target/
 frontend/node_modules/
 frontend/dist/
+frontend/.env.production
 
 *.class
 *.log
