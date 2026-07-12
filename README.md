@@ -37,7 +37,7 @@ Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 | Persistence | Spring Data JPA, Hibernate, MySQL |
 | Rate Limiting | Redis, atomic Lua script, Token Bucket algorithm |
 | Frontend | React (Vite), Axios |
-| Infrastructure | Docker, Docker Compose |
+| Infrastructure | Docker, Docker Compose, Render, Aiven (MySQL + Valkey), Vercel |
 | Testing | JUnit 5, Spring Boot Test |
 
 ---
@@ -1734,12 +1734,71 @@ test-setup helper (`createTestOrg()` initially not bootstrapping Admin/No Access
 
 ---
 
+## Phase 8 — Docker Containerization and Production Deployment
+
+The backend was containerized with a multi-stage `Dockerfile` (Maven+JDK build stage,
+slim JRE runtime stage) and deployed as three independently hosted services rather than one
+bundled artifact, reflecting how a stateless app tier and its stateful dependencies are
+typically separated in production:
+
+- **Backend** — Render (free web service, Docker runtime, root directory `backend/`)
+- **Database + cache** — Aiven (managed MySQL and Valkey, Redis-protocol-compatible, chosen
+  after Redis Inc.'s 2024 license change moved most clouds off "official" Redis)
+- **Frontend** — Vercel (static Vite build, root directory `frontend/`)
+
+**Configuration split:** a new `application-prod.yml` profile (activated via
+`SPRING_PROFILES_ACTIVE=prod`) overrides the dev-only `application.yml` with environment-variable-driven
+datasource, Redis, and JWT secret values, so local development config is never touched.
+TLS is enforced on both the JDBC URL (`sslMode=REQUIRED`) and Redis client
+(`spring.data.redis.ssl.enabled=true`), matching Aiven's default enforced-TLS policy.
+
+**Health check:** `spring-boot-starter-actuator` was added, exposing `/actuator/health` with
+`show-details: always`. It reports live connectivity to both MySQL and Redis, not just JVM
+liveness — used to manually confirm the deployed stack before demoing rather than as an
+automated keep-alive (the free Render instance is allowed to spin down after 15 minutes of
+inactivity; the trade-off was accepted deliberately over paying for an always-on instance).
+
+**Frontend/backend integration:** `axiosClient.js`'s hardcoded `localhost:8080` base URL was
+replaced with `import.meta.env.VITE_API_URL`, falling back to the local URL when unset, so the
+same source file serves both environments. `SecurityConfig.java`'s CORS configuration was
+extended to allow the deployed Vercel origin alongside `localhost:5173`.
+
+**SPA routing fix:** a `frontend/vercel.json` rewrite rule (`/(.*) → /index.html`) was added
+after discovering that direct navigation or a refresh on any non-root React Router path
+(e.g. `/invitations`) 404'd on Vercel — Vercel's static file server has no knowledge of
+client-side routes unless explicitly told to fall back to `index.html`.
+
+**Deployment issue encountered:** Render's GitHub auto-deploy silently stopped firing on
+pushes that touched `backend/` after a GitHub App reconnection (unrelated account-switching
+during setup). Diagnosed by checking the GitHub App's installation permissions (correctly
+scoped) and ultimately resolved by fully uninstalling and reinstalling the Render GitHub App,
+which re-registered a working webhook — confirmed via a subsequent "New commit via
+Auto-Deploy" event.
+
+---
+
 ## Setup and Running Locally
 
-*To be filled in after Phase 8.*
+**Backend**
+cd backend
+docker compose up -d          # from repo root: starts local MySQL + Redis
+./mvnw spring-boot:run
+Runs against `application.yml` (default profile) — local MySQL on `3306`, local Redis on `6379`.
+
+**Frontend**
+cd frontend
+npm install
+npm run dev
+Defaults to `http://localhost:8080/api` via `axiosClient.js`'s fallback when no
+`VITE_API_URL` env var is set.
 
 ---
 
 ## Live Demo
 
-*To be filled in after Phase 8.*
+- **Frontend:** https://tenant-platform-frontend-one.vercel.app
+- **Backend health check:** https://tenant-platform-backend.onrender.com/actuator/health
+
+The backend is hosted on Render's free tier and may take 30-60 seconds to respond on the
+first request after a period of inactivity (cold start on scale-to-zero). Subsequent
+requests are fast.
