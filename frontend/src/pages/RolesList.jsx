@@ -172,7 +172,7 @@ function RolesList() {
             ) : (
               <div className={styles.roleList}>
                 {roles.map((role) => {
-                  const isAdmin = role.name === 'Admin';
+                  const isAdmin = role.name === 'Admin' || role.name === 'No Access';
                   return (
                     <Link to={`/roles/${role.id}`} className={styles.roleRow} key={role.id}>
                       <div className={styles.roleLeft}>
