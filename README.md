@@ -3,8 +3,9 @@
 A backend platform demonstrating production-grade patterns for multi-tenant SaaS systems —
 complete data isolation across three independent layers, data-driven role-based access control,
 and per-organization API rate limiting backed by Redis. Multiple organizations share the same 
-application and database, with isolation enforced independently across three separate layers, 
-so that a gap in any single one still leaves the other two in place.
+application and database, with tenant isolation enforced independently across three layers, 
+ensuring that organizations cannot access or modify each other's data, even if a client sends 
+a malformed request.
 
 Built with Java 21, Spring Boot 3.4.5, Spring Security, Redis, and React.
 
