@@ -84,7 +84,7 @@ function RoleDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
-  const isAdmin = role?.name === 'Admin';
+  const isAdmin = role?.name === 'Admin' || role?.name === 'No Access';
   const hasMembers = (role?.memberCount ?? 0) > 0;
   const deleteDisabled = isAdmin || hasMembers || !canDelete;
 
