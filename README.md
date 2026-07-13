@@ -45,14 +45,18 @@ For the reasoning behind the key architectural and product decisions in this pro
 ![Home Dashboard](./docs/screenshots/home-dashboard.png)
 *Home — organization overview, live rate-limit usage, and recent activity at a glance.*
 
+
 ![Roles & Permissions Overview](./docs/screenshots/roles-list.png)
 *Roles & Permissions — every role in the organization, with member counts and lock status for system roles.*
+
 
 ![Roles & Permissions Detail](./docs/screenshots/role-permissions.png)
 *Role detail — individual permission toggles, showing a custom role with a deliberately partial permission set.*
 
+
 ![Members](./docs/screenshots/members.png)
 *Members — role assignments, active status, and per-member management actions.*
+
 
 ![Audit Log](./docs/screenshots/audit-log.png)
 *Audit Log — a complete, timestamped history of every mutation in the organization.*
