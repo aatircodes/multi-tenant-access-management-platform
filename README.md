@@ -391,6 +391,17 @@ surfaced anywhere in Render's UI. The fix was a full uninstall and reinstall of 
 App, which re-registered a working webhook — a reminder that "the deploy didn't trigger" isn't
 always an application-layer bug.
 
+A second infrastructure issue surfaced after initial deployment: production requests were taking
+15–30 seconds each, well beyond what free-tier cold starts alone would explain. The cause was a
+region mismatch — the Render backend was deployed in Oregon (US West), while the Aiven MySQL and
+Redis instances had been provisioned in Asia, so every database and cache call was crossing a full
+transcontinental round trip on top of the query itself. The fix was migrating both to Aiven
+services provisioned in North America, matching Render's region; per-request latency dropped from
+15–30 seconds to the low tens of milliseconds once both sides of the stack were region-aligned.
+Aiven's free tier only exposes a broad geographic choice at provisioning time, not a specific
+region matched to your compute provider, so this is the kind of default that has to be checked
+explicitly rather than assumed correct.
+
 ---
 
 ## Known Limitations
